@@ -30,23 +30,21 @@ class CSVTimeSeries:
             self.data_path,
             **read_csv_kwargs,
         )
+        df = stf.data.timefeatures.time_features(raw_df["quarter"], raw_df)
 
-        time_df = pd.to_datetime(raw_df["Datetime"], format="%Y-%m-%d %H:%M")
-        df = stf.data.timefeatures.time_features(time_df, raw_df)
-
-        assert (df["Datetime"] > pd.Timestamp.min).all()
-        assert (df["Datetime"] < pd.Timestamp.max).all()
+        assert (df["quarter"] > pd.Timestamp.min).all()
+        assert (df["quarter"] < pd.Timestamp.max).all()
 
         # Train/Val/Test Split using holdout approach #
 
         def mask_intervals(mask, intervals, cond):
             for (interval_low, interval_high) in intervals:
                 if interval_low is None:
-                    interval_low = df["Datetime"].iloc[0].year
+                    interval_low = df["quarter"].iloc[0].year
                 if interval_high is None:
-                    interval_high = df["Datetime"].iloc[-1].year
+                    interval_high = df["quarter"].iloc[-1].year
                 mask[
-                    (df["Datetime"] >= interval_low) & (df["Datetime"] <= interval_high)
+                    (df["quarter"] >= interval_low) & (df["quarter"] <= interval_high)
                 ] = cond
             return mask
 
@@ -61,9 +59,9 @@ class CSVTimeSeries:
         test_interval_high = time_df.iloc[-1]
         test_intervals = [(test_interval_low, test_interval_high)]
 
-        train_mask = df["Datetime"] > pd.Timestamp.min
-        val_mask = df["Datetime"] > pd.Timestamp.max
-        test_mask = df["Datetime"] > pd.Timestamp.max
+        train_mask = df["quarter"] > pd.Timestamp.min
+        val_mask = df["quarter"] > pd.Timestamp.max
+        test_mask = df["quarter"] > pd.Timestamp.max
         train_mask = mask_intervals(train_mask, test_intervals, False)
         train_mask = mask_intervals(train_mask, val_intervals, False)
         val_mask = mask_intervals(val_mask, val_intervals, True)
@@ -140,8 +138,8 @@ class CSVTorchDset(Dataset):
         self,
         csv_time_series: CSVTimeSeries,
         split: str = "train",
-        context_points: int = 128,
-        target_points: int = 32,
+        context_points: int = 18,
+        target_points: int = 8,
         time_resolution: int = 1,
     ):
         assert split in ["train", "val", "test"]
@@ -202,13 +200,13 @@ class CSVTorchDset(Dataset):
         parser.add_argument(
             "--context_points",
             type=int,
-            default=128,
+            default=18,
             help="number of previous timesteps given to the model in order to make predictions",
         )
         parser.add_argument(
             "--target_points",
             type=int,
-            default=32,
+            default=8,
             help="number of future timesteps to predict",
         )
         parser.add_argument(
