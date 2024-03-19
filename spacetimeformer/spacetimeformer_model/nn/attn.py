@@ -30,11 +30,14 @@ class FullAttention(nn.Module):
             if attn_mask is None:
                 attn_mask = TriangularCausalMask(B, L, device=queries.device)
 
+        if attn_mask is not None:
+            attn_mask = attn_mask.unsqueeze(1)  # expand heads dimension
             scores.masked_fill_(attn_mask.mask, -np.inf)
 
-        A = self.dropout(torch.softmax(scale * scores, dim=-1))
+        A = torch.nan_to_num(self.dropout(torch.softmax(scale * scores, dim=-1)))
+        # A = self.dropout(torch.softmax(scale * scores, dim=-1))
         V = torch.einsum("bhls,bshd->blhd", A, values)
-
+        
         if output_attn:
             return (V.contiguous(), A)
         else:
@@ -316,10 +319,10 @@ class AttentionLayer(nn.Module):
         self,
         attention,
         d_model,
+        d_queries_keys,
+        d_values,
         n_heads,
         dropout_qkv=0.0,
-        d_keys=None,
-        d_values=None,
         mix=False,
     ):
         super(AttentionLayer, self).__init__()
@@ -328,8 +331,8 @@ class AttentionLayer(nn.Module):
         d_values = d_values or (d_model // n_heads)
 
         self.inner_attention = attention()
-        self.query_projection = nn.Linear(d_model, d_keys * n_heads)
-        self.key_projection = nn.Linear(d_model, d_keys * n_heads)
+        self.query_projection = nn.Linear(d_model, d_queries_keys * n_heads)
+        self.key_projection = nn.Linear(d_model, d_queries_keys * n_heads)
         self.value_projection = nn.Linear(d_model, d_values * n_heads)
         self.out_projection = nn.Linear(d_values * n_heads, d_model)
         self.dropout_qkv = nn.Dropout(dropout_qkv)
@@ -350,11 +353,10 @@ class AttentionLayer(nn.Module):
             keys=keys,
             values=values,
             attn_mask=attn_mask,
-            # warning: changed
-            output_attn=False,
+            output_attn=output_attn,
         )
 
-        if output_attn:
+        if output_attn and attn is None:
             # This is a messy (and memory-intensive) approach that is only necessary for
             # extracting attention matrices from Xformer methods that
             # never explicitly compute them (e.g. Performer). It is inspired
