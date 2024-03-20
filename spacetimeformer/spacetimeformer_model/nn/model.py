@@ -32,6 +32,8 @@ class Spacetimeformer(nn.Module):
         d_yc: int = 1,
         d_yt: int = 1,
         d_x: int = 4,
+        categorical_dict_sizes=None,
+        categorical_embedding_dim: int =32,
         max_seq_len: int = None,
         attn_factor: int = 5,
         d_model: int = 512,
@@ -118,12 +120,15 @@ class Spacetimeformer(nn.Module):
             position_emb=pos_emb_type,
             max_seq_len=max_seq_len,
             data_dropout=recon_dropout,
+            categorical_dict_sizes=categorical_dict_sizes,
+            categorical_embedding_dim=categorical_embedding_dim,
         )
         self.dec_embedding = SpacetimeformerEmbedding(
             d_y=d_yt,
             d_x=d_x,
             d_model=d_model,
             time_emb_dim=time_emb_dim,
+            categorical_embedding_dim=categorical_embedding_dim,
             downsample_convs=initial_downsample_convs,
             method=embed_method,
             null_value=null_value,
@@ -236,6 +241,7 @@ class Spacetimeformer(nn.Module):
         qprint(f"LocalCrossAttn: {self.decoder.layers[0].local_cross_attention}")
         qprint(f"Using Embedding: {embed_method}")
         qprint(f"Time Emb Dim: {time_emb_dim}")
+        qprint(f"Categorical Emb Dim: {categorical_embedding_dim}")
         qprint(f"Space Embedding: {self.embedding.SPACE}")
         qprint(f"Time Embedding: {self.embedding.TIME}")
         qprint(f"Val Embedding: {self.embedding.VAL}")

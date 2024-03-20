@@ -67,6 +67,7 @@ def create_parser():
 
 def create_model(config):
     x_dim, yc_dim, yt_dim = 2, 35, 1
+    categorical_dict_sizes = [11,25,74,163]
 
     assert x_dim is not None
     assert yc_dim is not None
@@ -121,6 +122,8 @@ def create_model(config):
         class_loss_imp=config.class_loss_imp,
         recon_loss_imp=config.recon_loss_imp,
         time_emb_dim=config.time_emb_dim,
+        categorical_dict_sizes=categorical_dict_sizes,
+        categorical_embedding_dim=config.categorical_embedding_dim,
         null_value=config.null_value,
         pad_value=config.pad_value,
         linear_window=config.linear_window,

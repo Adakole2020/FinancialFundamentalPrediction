@@ -74,8 +74,8 @@ class CSVTimeSeries:
         )
         self.time_cols = df.columns.difference(raw_df.columns)
 
-        assert (df["quarter"] > pd.Timestamp.min).all()
-        assert (df["quarter"] < pd.Timestamp.max).all()
+        assert (df[self.time_col_name] > pd.Timestamp.min).all()
+        assert (df[self.time_col_name] < pd.Timestamp.max).all()
 
         # Train/Val/Test Split using holdout approach #
 

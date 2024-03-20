@@ -60,14 +60,15 @@ class SpacetimeformerEmbeddingWithCategoricals(SpacetimeformerEmbedding):
             data_dropout,
             max_seq_len,
         )
+        if self.is_encoder:
+            self.categorical_dict_sizes = categorical_dict_sizes
+            self.categorical_embedding_dim = categorical_embedding_dim
         
-        self.categorical_dict_sizes = categorical_dict_sizes
-        self.categorical_embedding_dim = categorical_embedding_dim
-        
-        self.cat_emb = nn.ModuleList([
-            nn.Embedding(num_embeddings=size, embedding_dim=categorical_embedding_dim)
-            for size in categorical_dict_sizes
-        ])
+            if categorical_dict_sizes:
+                self.cat_emb = nn.ModuleList([
+                    nn.Embedding(num_embeddings=size, embedding_dim=categorical_embedding_dim)
+                    for size in categorical_dict_sizes
+                ])
         
         y_emb_inp_dim = d_y if self.method == "temporal" else 1
         time_dim = time_emb_dim * d_x
@@ -120,13 +121,15 @@ class SpacetimeformerEmbeddingWithCategoricals(SpacetimeformerEmbedding):
         # val embedding
         if not self.VAL:
             y = torch.zeros_like(y)
-        k = len(self.categorical_dict_sizes)
-        for i, emb in enumerate(self.cat_emb):
-            cat = y[:, :, d_y-k+i].long()
-            cat_emb = emb(cat)
-            y = torch.cat((y, cat_emb), dim=-1)
-        
-        y = np.concatenate((y[:, :, :d_y-k], y[:, :, d_y:]), axis=2) # [bs, length, d_y] -> [bs, length, d_y - k + (categorical_embedding_dim - 1) * k]
+            
+        if self.is_encoder and self.categorical_dict_sizes:
+            k = len(self.categorical_dict_sizes)
+            for i, emb in enumerate(self.cat_emb):
+                cat = y[:, :, d_y-k+i].long()
+                cat_emb = emb(cat)
+                y = torch.cat((y, cat_emb), dim=-1)
+            
+            y = np.concatenate((y[:, :, :d_y-k], y[:, :, d_y:]), axis=2) # [bs, length, d_y] -> [bs, length, d_y - k + (categorical_embedding_dim - 1) * k]
         val_time_inp = torch.cat((y, time_emb), dim=-1) # [bs, length, d_y + time_emb_dim * d_x]
         val_time_emb = self.val_time_emb(val_time_inp) # [bs, length, d_model]
 
@@ -191,22 +194,24 @@ class SpacetimeformerEmbeddingWithCategoricals(SpacetimeformerEmbedding):
             
         # val  + time embedding
         y = torch.cat(y.chunk(d_y, dim=-1), dim=1) # [bs, length, d_y] -> [bs, length * d_y]
-        # Reshape the tensor to (bs, length_dy, 1)
-        y = torch.unsqueeze(y,2)
-        # Concatenate zeros along the third dimension to make it (bs, length*d_y, categorical_embedding_dim)
-        zeros = torch.zeros((bs, length * d_y, self.categorical_embedding_dim-1)).long().to(x.device) 
-        y = torch.cat((y, zeros), dim=-1)
         
-        categorical_dim = len(self.categorical_dict_sizes)
-        
-        # For each row in the batch, replace the last categorical_dim elements of the second dimension with the embeddings
-        for i in range(bs):
-            for j in range(length*d_y):
-                if j % d_y >= (d_y-categorical_dim):
-                    # Apply PyTorch embedding for this categorical variable
-                    embedding = self.cat_emb[(j % d_y) - categorical_dim](y[i, j, 0].clone().detach().long())
-                    # Replace the entire third dimension for that row with the embedding
-                    y[i, j] = embedding.unsqueeze(0)
+        if self.is_encoder and self.categorical_dict_sizes:
+            # Reshape the tensor to (bs, length_dy, 1)
+            y = torch.unsqueeze(y,2)
+            # Concatenate zeros along the third dimension to make it (bs, length*d_y, categorical_embedding_dim)
+            zeros = torch.zeros((bs, length * d_y, self.categorical_embedding_dim-1)).long().to(x.device) 
+            y = torch.cat((y, zeros), dim=-1)
+            
+            categorical_dim = len(self.categorical_dict_sizes)
+            
+            # For each row in the batch, replace the last categorical_dim elements of the second dimension with the embeddings
+            for i in range(bs):
+                for j in range(length*d_y):
+                    if j % d_y >= (d_y-categorical_dim):
+                        # Apply PyTorch embedding for this categorical variable
+                        embedding = self.cat_emb[(j % d_y) - categorical_dim](y[i, j, 0].clone().detach().long())
+                        # Replace the entire third dimension for that row with the embedding
+                        y[i, j] = embedding.unsqueeze(0)
         
         val_time_inp = torch.cat((y, time_emb), dim=-1) # [bs, length * d_y, 1 + time_emb_dim * d_x]
         val_time_emb = self.val_time_emb(val_time_inp) # [bs, length * d_y, d_model]

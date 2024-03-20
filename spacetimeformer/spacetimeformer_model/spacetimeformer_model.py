@@ -56,6 +56,8 @@ class Spacetimeformer_Forecaster(stf.Forecaster):
         class_loss_imp: float = 1e-3,
         recon_loss_imp: float = 0,
         time_emb_dim: int = 6,
+        categorical_dict_sizes=None,
+        categorical_embedding_dim: int=32,
         null_value: float = None,
         pad_value: float = None,
         linear_window: int = 0,
@@ -83,6 +85,8 @@ class Spacetimeformer_Forecaster(stf.Forecaster):
             d_yc=d_yc,
             d_yt=d_yt,
             d_x=d_x,
+            categorical_dict_sizes=categorical_dict_sizes,
+            categorical_embedding_dim=categorical_embedding_dim,
             start_token_len=start_token_len,
             attn_factor=attn_factor,
             d_model=d_model,
@@ -512,6 +516,12 @@ class Spacetimeformer_Forecaster(stf.Forecaster):
             type=int,
             default=12,
             help="Time embedding dimension. Embed *each dimension of x* with this many learned periodic values.",
+        )
+        parser.add_argument(
+            "--categorical_embedding_dim",
+            type=int,
+            default=32,
+            help="Categorical embedding dimensions. Embed *each dimension of any categorical y with this many learned values.",
         )
         parser.add_argument(
             "--performer_kernel",
