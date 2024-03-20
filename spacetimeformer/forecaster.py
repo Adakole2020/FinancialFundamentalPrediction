@@ -15,25 +15,58 @@ from sam import SAM
 class Forecaster(pl.LightningModule, ABC):
     def __init__(
         self,
+        d_x: int,
+        d_yc: int,
+        d_yt: int,
         learning_rate: float = 1e-3,
         l2_coeff: float = 0,
         loss: str = "mse",
         linear_window: int = 0,
+        linear_shared_weights: bool = False,
+        use_revin: bool = False,
+        use_seasonal_decomp: bool = False,
+        verbose: int = True,
     ):
         super().__init__()
+        qprint = lambda _msg_: print(_msg_) if verbose else None
+        qprint("Forecaster")
+        qprint(f"\tL2: {l2_coeff}")
+        qprint(f"\tLinear Window: {linear_window}")
+        qprint(f"\tLinear Shared Weights: {linear_shared_weights}")
+        qprint(f"\tRevIN: {use_revin}")
+        qprint(f"\tDecomposition: {use_seasonal_decomp}")
+
         self._inv_scaler = lambda x: x
-        self._scaler = lambda x: x
         self.l2_coeff = l2_coeff
         self.learning_rate = learning_rate
         self.time_masked_idx = None
         self.null_value = None
         self.loss = loss
+
         if linear_window:
-            self.linear_model = stf.linear_model.LinearModel(linear_window)
+            self.linear_model = stf.linear_model.LinearModel(
+                linear_window, shared_weights=linear_shared_weights, d_yt=d_yt
+            )
         else:
-            self.linear_model = lambda x: 0.0
-        if self.loss == "SAMnll" or self.loss == "SAMmse":
-            self.automatic_optimization = False
+            self.linear_model = lambda x, *args, **kwargs: 0.0
+
+        self.use_revin = use_revin
+        if use_revin:
+            assert d_yc == d_yt, "TODO: figure out exo case for revin"
+            self.revin = stf.revin.RevIN(num_features=d_yc)
+        else:
+            self.revin = lambda x, *args, **kwargs: x
+
+        self.use_seasonal_decomp = use_seasonal_decomp
+        if use_seasonal_decomp:
+            self.seasonal_decomp = stf.revin.SeriesDecomposition(kernel_size=25)
+        else:
+            self.seasonal_decomp = lambda x: (x, x.clone())
+
+        self.d_x = d_x
+        self.d_yc = d_yc
+        self.d_yt = d_yt
+        self.save_hyperparameters()
 
     def set_null_value(self, val: float) -> None:
         self.null_value = val
@@ -58,7 +91,7 @@ class Forecaster(pl.LightningModule, ABC):
         self, true: torch.Tensor, preds: torch.Tensor, mask: torch.Tensor
     ) -> torch.Tensor:
 
-        if self.loss == "mse" or self.loss == "SAMmse":
+        if self.loss == "mse":
             if isinstance(preds, Normal):
                 preds = preds.mean
             return F.mse_loss(mask * true, mask * preds)
@@ -66,7 +99,13 @@ class Forecaster(pl.LightningModule, ABC):
             if isinstance(preds, Normal):
                 preds = preds.mean
             return torch.abs((true - preds) * mask).mean()
-        elif self.loss == "nll" or self.loss == "SAMnll":
+        elif self.loss == "smape":
+            if isinstance(preds, Normal):
+                preds = preds.mean
+            num = 2.0 * abs(preds - true)
+            den = abs(preds.detach()) + abs(true) + 1e-5
+            return 100.0 * (mask * (num / den)).sum() / max(mask.sum(), 1)
+        elif self.loss == "nll":
             assert isinstance(preds, Normal)
             return -(mask * preds.log_prob(true)).sum(-1).sum(-1).mean()
             # return F.nll_loss(mask * true, mask * preds)
@@ -80,6 +119,9 @@ class Forecaster(pl.LightningModule, ABC):
             null_mask_mat = y_t != self.null_value
         else:
             null_mask_mat = torch.ones_like(y_t)
+            
+        # genuine NaN failsafe
+        null_mask_mat *= ~torch.isnan(y_t)
 
         time_mask_mat = y_t > -float("inf")
         if time_mask is not None:
@@ -164,26 +206,47 @@ class Forecaster(pl.LightningModule, ABC):
         y_t: torch.Tensor,
         **forward_kwargs,
     ) -> Tuple[torch.Tensor]:
-        preds, *extra = self.forward_model_pass(x_c, y_c, x_t, y_t, **forward_kwargs)
-        baseline = self.linear_model(y_c)
+        x_c, y_c, x_t, y_t = self.nan_to_num(x_c, y_c, x_t, y_t)
+        _, pred_len, d_yt = y_t.shape
+
+        y_c = self.revin(y_c, mode="norm")  # does nothing if use_revin = False
+
+        seasonal_yc, trend_yc = self.seasonal_decomp(
+            y_c
+        )  # both are the original if use_seasonal_decomp = False
+        
+        preds, *extra = self.forward_model_pass(x_c, seasonal_yc, x_t, y_t, **forward_kwargs)
+        baseline = self.linear_model(trend_yc, pred_len=pred_len, d_yt=d_yt)
+        
         if isinstance(preds, Normal):
-            preds.loc = preds.loc + baseline
+            preds.loc = self.revin(preds.loc + baseline, mode="denorm")
             output = preds
         else:
-            output = preds + baseline
+            output = self.revin(preds + baseline, mode="denorm")
+            
         if extra:
             return (output,) + tuple(extra)
         return (output,)
 
-    def _compute_stats(self, pred: torch.Tensor, true: torch.Tensor):
-        pred = self._inv_scaler(pred.detach().cpu().numpy())
-        true = self._inv_scaler(true.detach().cpu().numpy())
-        return {
-            "mape": stf.eval_stats.mape(true, pred),
-            "mae": stf.eval_stats.mae(true, pred),
-            "mse": stf.eval_stats.mse(true, pred),
-            "rse": stf.eval_stats.rrse(true, pred),
+    def _compute_stats(self, pred: torch.Tensor, true: torch.Tensor, mask: torch.Tensor):
+        pred = pred * mask
+        true = torch.nan_to_num(true) * mask
+
+        adj = mask.mean().cpu().numpy() + 1e-5
+        pred = pred.detach().cpu().numpy()
+        true = true.detach().cpu().numpy()
+        scaled_pred = self._inv_scaler(pred)
+        scaled_true = self._inv_scaler(true)
+        stats = {
+            "mape": stf.eval_stats.mape(scaled_true, scaled_pred) / adj,
+            "mae": stf.eval_stats.mae(scaled_true, scaled_pred) / adj,
+            "mse": stf.eval_stats.mse(scaled_true, scaled_pred) / adj,
+            "rse": stf.eval_stats.rrse(scaled_true, scaled_pred) / adj,
+            "smape": stf.eval_stats.smape(scaled_true, scaled_pred) / adj,
+            "norm_mae": stf.eval_stats.mae(true, pred) / adj,
+            "norm_mse": stf.eval_stats.mse(true, pred) / adj,
         }
+        return stats
 
     def step(self, batch: Tuple[torch.Tensor], train: bool = False):
         kwargs = (
@@ -197,15 +260,6 @@ class Forecaster(pl.LightningModule, ABC):
             time_mask=time_mask,
             forward_kwargs=kwargs,
         )
-        if self.loss == "SAMnll" or self.loss == "SAMmse":
-            optimizer = self.optimizers()
-            self.manual_backward(loss, optimizer)
-            optimizer.first_step(zero_grad=True)
-
-            # second forward-backward pass
-            loss_2 = self.compute_loss(batch)
-            self.manual_backward(loss_2, optimizer)
-            optimizer.second_step(zero_grad=True)
         *_, y_t = batch
         stats = self._compute_stats(mask * output, mask * y_t)
         stats["loss"] = loss
@@ -215,7 +269,9 @@ class Forecaster(pl.LightningModule, ABC):
         return self.step(batch, train=True)
 
     def validation_step(self, batch, batch_idx):
-        return self.step(batch, train=False)
+        stats = self.step(batch, train=False)
+        self.current_val_stats = stats
+        return stats
 
     def test_step(self, batch, batch_idx):
         return self.step(batch, train=False)
@@ -233,7 +289,6 @@ class Forecaster(pl.LightningModule, ABC):
 
     def validation_step_end(self, outs):
         self._log_stats("val", outs)
-        self.val_loss = outs["loss"].mean()
         return {"loss": outs["loss"].mean()}
 
     def test_step_end(self, outs):
@@ -242,11 +297,6 @@ class Forecaster(pl.LightningModule, ABC):
 
     def predict_step(self, batch, batch_idx):
         return self(*batch, **self.eval_step_forward_kwargs)
-    
-    def on_train_epoch_end(self) -> None:
-        lr_scheduler = self.lr_schedulers()
-        lr_scheduler.step(self.val_loss)
-        return super().on_train_epoch_end()
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(
@@ -257,8 +307,6 @@ class Forecaster(pl.LightningModule, ABC):
             patience=3,
             factor=0.2,
         )
-        if self.loss == "SAMnll":
-            optimizer = SAM(self.parameters(),optimizer, lr=self.learning_rate, weight_decay=self.l2_coeff)
         return {
             "optimizer": optimizer,
             "lr_scheduler": {
@@ -274,6 +322,9 @@ class Forecaster(pl.LightningModule, ABC):
         parser.add_argument("--learning_rate", type=float, default=1e-4)
         parser.add_argument("--grad_clip_norm", type=float, default=0)
         parser.add_argument("--linear_window", type=int, default=0)
+        parser.add_argument("--use_revin", action="store_true")
         parser.add_argument(
-            "--loss", type=str, default="mse", choices=["mse", "mae", "nll", "SAMnll"]
+            "--loss", type=str, default="mse", choices=["mse", "mae", "nll", "smape", "rse"]
         )
+        parser.add_argument("--linear_shared_weights", action="store_true")
+        parser.add_argument("--use_seasonal_decomp", action="store_true")

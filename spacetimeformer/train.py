@@ -16,7 +16,7 @@ import spacetimeformer as stf
 _MODELS = ["spacetimeformer"]
 
 _DSETS = [
-    "IBM"
+    "FUNDAMENTALS"
 ]
 
 
@@ -43,14 +43,17 @@ def create_parser():
 
     stf.callbacks.TimeMaskedLossCallback.add_cli(parser)
 
-    parser.add_argument("--null_value", type=float, default=None)
-    parser.add_argument("--early_stopping", action="store_true")
     parser.add_argument("--wandb", action="store_true")
     parser.add_argument("--plot", action="store_true")
+    parser.add_argument("--plot_samples", type=int, default=8)
     parser.add_argument("--attn_plot", action="store_true")
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--run_name", type=str, required=True)
     parser.add_argument("--accumulate", type=int, default=1)
+    parser.add_argument("--val_check_interval", type=float, default=1.0)
+    parser.add_argument("--limit_val_batches", type=float, default=1.0)
+    parser.add_argument("--no_earlystopping", action="store_true")
+    parser.add_argument("--patience", type=int, default=5)
     parser.add_argument(
         "--trials", type=int, default=1, help="How many consecutive trials to run"
     )
@@ -63,36 +66,47 @@ def create_parser():
 
 
 def create_model(config):
-    x_dim, y_dim = None, None
-    if config.dset == "IBM":
-        x_dim = 7
-        y_dim = 7
+    x_dim, yc_dim, yt_dim = 2, 35, 1
 
     assert x_dim is not None
-    assert y_dim is not None
+    assert yc_dim is not None
+    assert yt_dim is not None
 
+    if hasattr(config, "context_points") and hasattr(config, "target_points"):
+        max_seq_len = config.context_points + config.target_points
+    elif hasattr(config, "max_len"):
+        max_seq_len = config.max_len
+    else:
+        raise ValueError("Undefined max_seq_len")
     forecaster = stf.spacetimeformer_model.Spacetimeformer_Forecaster(
-        d_y=y_dim,
         d_x=x_dim,
+        d_yc=yc_dim,
+        d_yt=yt_dim,
+        max_seq_len=max_seq_len,
         start_token_len=config.start_token_len,
         attn_factor=config.attn_factor,
         d_model=config.d_model,
+        d_queries_keys=config.d_qk,
+        d_values=config.d_v,
         n_heads=config.n_heads,
         e_layers=config.enc_layers,
         d_layers=config.dec_layers,
         d_ff=config.d_ff,
         dropout_emb=config.dropout_emb,
-        dropout_token=config.dropout_token,
         dropout_attn_out=config.dropout_attn_out,
+        dropout_attn_matrix=config.dropout_attn_matrix,
         dropout_qkv=config.dropout_qkv,
         dropout_ff=config.dropout_ff,
+        pos_emb_type=config.pos_emb_type,
+        use_final_norm=not config.no_final_norm,
         global_self_attn=config.global_self_attn,
         local_self_attn=config.local_self_attn,
         global_cross_attn=config.global_cross_attn,
         local_cross_attn=config.local_cross_attn,
         performer_kernel=config.performer_kernel,
         performer_redraw_interval=config.performer_redraw_interval,
-        post_norm=config.post_norm,
+        attn_time_windows=config.attn_time_windows,
+        use_shifted_time_windows=config.use_shifted_time_windows,
         norm=config.norm,
         activation=config.activation,
         init_lr=config.init_lr,
@@ -104,10 +118,20 @@ def create_model(config):
         embed_method=config.embed_method,
         l2_coeff=config.l2_coeff,
         loss=config.loss,
-        linear_window=config.linear_window,
         class_loss_imp=config.class_loss_imp,
+        recon_loss_imp=config.recon_loss_imp,
         time_emb_dim=config.time_emb_dim,
         null_value=config.null_value,
+        pad_value=config.pad_value,
+        linear_window=config.linear_window,
+        use_revin=config.use_revin,
+        linear_shared_weights=config.linear_shared_weights,
+        use_seasonal_decomp=config.use_seasonal_decomp,
+        recon_mask_skip_all=config.recon_mask_skip_all,
+        recon_mask_max_seq_len=config.recon_mask_max_seq_len,
+        recon_mask_drop_seq=config.recon_mask_drop_seq,
+        recon_mask_drop_standard=config.recon_mask_drop_standard,
+        recon_mask_drop_full=config.recon_mask_drop_full,
     )
 
     return forecaster
@@ -117,11 +141,19 @@ def create_dset(config):
     INV_SCALER = lambda x: x
     SCALER = lambda x: x
     NULL_VAL = None
-    if config.dset == "IBM":
-        data_path="./data/IBM.csv"
+    PLOT_VAR_IDXS = None
+    PLOT_VAR_NAMES = None
+    PAD_VAL = None
+    
+    
+    if config.dset == "FUNDAMENTALS":
+        data_path="./data/fundamentals.csv"
         dset = stf.data.CSVTimeSeries(
             data_path=data_path,
-            target_cols=["Open", "High", "Low", "Close", "Volume", "Dividends","Stock Splits"]
+            target_cols=["eps_surprise"],
+            ignore_cols=["symbol"],
+            time_col_name="quarter",
+            time_features=["year", "month"],
         )
         DATA_MODULE = stf.data.DataModule(
             datasetCls=stf.data.CSVTorchDset,
@@ -133,41 +165,51 @@ def create_dset(config):
             },
             batch_size=config.batch_size,
             workers=config.workers,
+            overfit=args.overfit,
         )
         INV_SCALER = dset.reverse_scaling
         SCALER = dset.apply_scaling
         NULL_VAL = None
-    return DATA_MODULE, INV_SCALER, SCALER, NULL_VAL
+        # PAD_VAL = -32.0
+        PLOT_VAR_NAMES = target_cols
+        PLOT_VAR_IDXS = [i for i in range(len(target_cols))]
+        
+    return (
+        DATA_MODULE,
+        INV_SCALER,
+        SCALER,
+        NULL_VAL,
+        PLOT_VAR_IDXS,
+        PLOT_VAR_NAMES,
+        PAD_VAL,
+    )
 
 
-def create_callbacks(config):
+def create_callbacks(config, save_dir):
+    filename = f"{config.run_name}_" + str(uuid.uuid1()).split("-")[0]
+    model_ckpt_dir = os.path.join(save_dir, filename)
+    config.model_ckpt_dir = model_ckpt_dir
     saving = pl.callbacks.ModelCheckpoint(
-        dirpath=f"./data/stf_model_checkpoints/{config.run_name}_{''.join([str(random.randint(0,9)) for _ in range(9)])}",
-        monitor="val/mse",
+        dirpath=model_ckpt_dir,
+        monitor="val/loss",
         mode="min",
-        filename=f"{config.run_name}" + "{epoch:02d}-{val/mse:.2f}",
+        filename=f"{config.run_name}" + "{epoch:02d}",
         save_top_k=1,
+        auto_insert_metric_name=True,
     )
     callbacks = [saving]
 
-    if config.early_stopping:
+    if not config.no_earlystopping:
         callbacks.append(
             pl.callbacks.early_stopping.EarlyStopping(
                 monitor="val/loss",
-                patience=5,
+                patience=config.patience,
             )
         )
+    
     if config.wandb:
         callbacks.append(pl.callbacks.LearningRateMonitor())
 
-    if config.model == "lstm":
-        callbacks.append(
-            stf.callbacks.TeacherForcingAnnealCallback(
-                start=config.teacher_forcing_start,
-                end=config.teacher_forcing_end,
-                epochs=config.teacher_forcing_anneal_epochs,
-            )
-        )
     if config.time_mask_loss:
         callbacks.append(
             stf.callbacks.TimeMaskedLossCallback(
@@ -180,19 +222,20 @@ def create_callbacks(config):
 
 
 def main(args):
+    log_dir = os.getenv("STF_LOG_DIR")
+    if log_dir is None:
+        log_dir = "./data/STF_LOG_DIR"
+        print(
+            "Using default wandb log dir path of ./data/STF_LOG_DIR. This can be adjusted with the environment variable `STF_LOG_DIR`"
+        )
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+
     if args.wandb:
         import wandb
 
         project = os.getenv("STF_WANDB_PROJ")
         entity = os.getenv("STF_WANDB_ACCT")
-        log_dir = os.getenv("STF_LOG_DIR")
-        if log_dir is None:
-            log_dir = "./data/STOCK_LOG_DIR"
-            print(
-                "Using default wandb log dir path of ./data/STOCK_LOG_DIR. This can be adjusted with the environment variable `STF_LOG_DIR`"
-            )
-        if not os.path.exists(log_dir):
-            os.makedirs(log_dir)
         assert (
             project is not None and entity is not None
         ), "Please set environment variables `STF_WANDB_ACCT` and `STF_WANDB_PROJ` with \n\
@@ -208,15 +251,24 @@ def main(args):
         wandb.run.name = args.run_name
         wandb.run.save()
         logger = pl.loggers.WandbLogger(
-            experiment=experiment, save_dir="./data/STOCK_LOG_DIR"
+            experiment=experiment,
+            save_dir=log_dir,
         )
-        logger.log_hyperparams(config)
 
     # Dset
-    data_module, inv_scaler, scaler, null_val = create_dset(args)
+    (
+        data_module,
+        inv_scaler,
+        scaler,
+        null_val,
+        plot_var_idxs,
+        plot_var_names,
+        pad_val,
+    ) = create_dset(args)
 
     # Model
     args.null_value = null_val
+    args.pad_value = pad_val
     forecaster = create_model(args)
     forecaster.set_inv_scaler(inv_scaler)
     forecaster.set_scaler(scaler)
@@ -229,41 +281,57 @@ def main(args):
     if args.wandb and args.plot:
         callbacks.append(
             stf.plot.PredictionPlotterCallback(
-                test_samples, total_samples=min(8, args.batch_size)
+                test_samples,
+                var_idxs=plot_var_idxs,
+                var_names=plot_var_names,
+                pad_val=pad_val,
+                total_samples=min(args.plot_samples, args.batch_size),
             )
         )
-    if args.wandb and args.model == "spacetimeformer" and args.attn_plot:
+        
+    if args.wandb and args.attn_plot:
 
         callbacks.append(
             stf.plot.AttentionMatrixCallback(
                 test_samples,
                 layer=0,
                 total_samples=min(16, args.batch_size),
-                raw_data_dir=wandb.run.dir,
             )
         )
+        
+    if args.wandb:
+        config.update(args)
+        logger.log_hyperparams(config)
+
+    if args.val_check_interval <= 1.0:
+        val_control = {"val_check_interval": args.val_check_interval}
+    else:
+        val_control = {"check_val_every_n_epoch": int(args.val_check_interval)}
 
     trainer = pl.Trainer(
         gpus=args.gpus,
         callbacks=callbacks,
         logger=logger if args.wandb else None,
         accelerator="dp",
-        log_gpu_memory=True,
         gradient_clip_val=args.grad_clip_norm,
         gradient_clip_algorithm="norm",
         overfit_batches=20 if args.debug else 0,
-        # track_grad_norm=2,
         accumulate_grad_batches=args.accumulate,
         sync_batchnorm=True,
-        val_check_interval=0.25 if args.dset == "asos" else 1.0,
+        limit_val_batches=args.limit_val_batches,
+        **val_control,
     )
-
     # Train
     trainer.fit(forecaster, datamodule=data_module)
 
     # Test
     trainer.test(datamodule=data_module, ckpt_path="best")
-
+    
+    
+    # Predict (only here as a demo and test)
+    # forecaster.to("cuda")
+    # xc, yc, xt, _ = test_samples
+    # yt_pred = forecaster.predict(xc, yc, xt)
     if args.wandb:
         experiment.finish()
 

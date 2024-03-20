@@ -5,8 +5,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributions as pyd
+from einops import rearrange, repeat
 
-from ..utils.masking import TriangularCausalMask, ProbMask
+from .extra_layers import ConvBlock, Normalization, FoldForPred
 from .encoder import Encoder, EncoderLayer, VariableDownsample, Normalization
 from .decoder import Decoder, DecoderLayer
 from .attn import (
@@ -19,6 +20,8 @@ from .attn import (
     NystromSelfAttention,
 )
 from .embed import SpacetimeformerEmbedding
+from .data_dropout import ReconstructionDropout
+
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -26,35 +29,49 @@ warnings.filterwarnings("ignore", category=UserWarning)
 class Spacetimeformer(nn.Module):
     def __init__(
         self,
-        d_y: int = 1,
+        d_yc: int = 1,
+        d_yt: int = 1,
         d_x: int = 4,
-        start_token_len: int = 64,
+        max_seq_len: int = None,
         attn_factor: int = 5,
         d_model: int = 512,
+        d_queries_keys: int = 30,
+        d_values: int = 30,
         n_heads: int = 8,
         e_layers: int = 2,
-        d_layers: int = 2,
+        d_layers: int = 3,
         d_ff: int = 512,
+        start_token_len: int = 64,
         time_emb_dim: int = 6,
         dropout_emb: float = 0.05,
-        dropout_token: float = 0.05,
+        dropout_attn_matrix: float = 0.05,
         dropout_attn_out: float = 0.05,
         dropout_ff: float = 0.05,
         dropout_qkv: float = 0.05,
+        pos_emb_type: str = "abs",
         global_self_attn: str = "performer",
-        local_self_attn: str = "none",
+        local_self_attn: str = "performer",
         global_cross_attn: str = "performer",
-        local_cross_attn: str = "none",
+        local_cross_attn: str = "performer",
         performer_attn_kernel: str = "relu",
         performer_redraw_interval: int = 250,
+        attn_time_windows: int = 1,
+        use_shifted_time_windows: bool = True,
         embed_method: str = "spatio-temporal",
         activation: str = "gelu",
-        post_norm: bool = True,
         norm: str = "layer",
+        use_final_norm: bool = True,
         initial_downsample_convs: int = 0,
         intermediate_downsample_convs: int = 0,
         device=torch.device("cuda:0"),
         null_value: float = None,
+        pad_value: float = None,
+        out_dim: int = None,
+        recon_mask_skip_all: float = 1.0,
+        recon_mask_max_seq_len: int = 5,
+        recon_mask_drop_seq: float = 0.1,
+        recon_mask_drop_standard: float = 0.2,
+        recon_mask_drop_full: float = 0.05,
         verbose: bool = True,
     ):
         super().__init__()
@@ -67,33 +84,70 @@ class Spacetimeformer(nn.Module):
             assert (
                 local_cross_attn == "none"
             ), "Local Attention not compatible with Temporal-only embedding"
-
-        self.start_token_len = start_token_len
+            split_length_into = 1
+        else:
+            split_length_into = d_yc
+            
+        self.pad_value = pad_value
         self.embed_method = embed_method
-
-        # Encoding
-        self.embedding = SpacetimeformerEmbedding(
-            d_y=d_y,
+        self.d_yt = d_yt
+        self.d_yc = d_yc
+        self.start_token_len = start_token_len
+        
+        # generates random masks of context sequence for encoder to reconstruct
+        recon_dropout = ReconstructionDropout(
+            drop_full_timesteps=recon_mask_drop_full,
+            drop_standard=recon_mask_drop_standard,
+            drop_seq=recon_mask_drop_seq,
+            drop_max_seq_len=recon_mask_max_seq_len,
+            skip_all_drop=recon_mask_skip_all,
+        )
+        
+        # embeddings. seperate enc/dec in case the variable indices are not aligned
+        self.enc_embedding = SpacetimeformerEmbedding(
+            d_y=d_yc,
             d_x=d_x,
             d_model=d_model,
             time_emb_dim=time_emb_dim,
             downsample_convs=initial_downsample_convs,
             method=embed_method,
-            start_token_len=start_token_len,
             null_value=null_value,
+            pad_value=pad_value,
+            start_token_len=start_token_len,
+            is_encoder=True,
+            position_emb=pos_emb_type,
+            max_seq_len=max_seq_len,
+            data_dropout=recon_dropout,
+        )
+        self.dec_embedding = SpacetimeformerEmbedding(
+            d_y=d_yt,
+            d_x=d_x,
+            d_model=d_model,
+            time_emb_dim=time_emb_dim,
+            downsample_convs=initial_downsample_convs,
+            method=embed_method,
+            null_value=null_value,
+            pad_value=pad_value,
+            start_token_len=start_token_len,
+            is_encoder=False,
+            position_emb=pos_emb_type,
+            max_seq_len=max_seq_len,
+            data_dropout=None,
         )
 
-        # Select Attention Mechanisms
+         # Select Attention Mechanisms
         attn_kwargs = {
             "d_model": d_model,
             "n_heads": n_heads,
+            "d_qk": d_queries_keys,
+            "d_v": d_values,
             "dropout_qkv": dropout_qkv,
-            "d_y": d_y,
-            "dropout_attn_out": dropout_attn_out,
+            "dropout_attn_matrix": dropout_attn_matrix,
             "attn_factor": attn_factor,
             "performer_attn_kernel": performer_attn_kernel,
             "performer_redraw_interval": performer_redraw_interval,
         }
+        
         GlobalSelfAttn = self._global_attn_switch(global_self_attn, **attn_kwargs)
         GlobalCrossAttn = self._global_attn_switch(global_cross_attn, **attn_kwargs)
         LocalSelfAttn = self._local_attn_switch(local_self_attn, **attn_kwargs)
@@ -102,50 +156,77 @@ class Spacetimeformer(nn.Module):
         self.encoder = Encoder(
             attn_layers=[
                 EncoderLayer(
-                    global_attention=GlobalSelfAttn(),
-                    local_attention=LocalSelfAttn(),
+                    global_attention=self._attn_switch(
+                        global_self_attn,
+                        **attn_kwargs,
+                    ),
+                    local_attention=self._attn_switch(
+                        local_self_attn,
+                        **attn_kwargs,
+                    ),
                     d_model=d_model,
+                    d_yc=d_yc if embed_method == "spatio-temporal" else 1,
+                    time_windows=attn_time_windows,
+                    # encoder layers alternate using shifted windows, if applicable
+                    time_window_offset=2
+                    if use_shifted_time_windows and (l % 2 == 1)
+                    else 0,
                     d_ff=d_ff,
                     dropout_ff=dropout_ff,
+                    dropout_attn_out=dropout_attn_out,
                     activation=activation,
-                    post_norm=post_norm,
                     norm=norm,
                 )
                 for l in range(e_layers)
             ],
             conv_layers=[
-                VariableDownsample(d_y=d_y, d_model=d_model)
+                ConvBlock(split_length_into=split_length_into, d_model=d_model)
                 for l in range(intermediate_downsample_convs)
             ],
-            norm_layer=Normalization(method=norm, d_model=d_model)
-            if not post_norm
-            else None,
+            norm_layer=Normalization(norm, d_model=d_model) if use_final_norm else None,
             emb_dropout=dropout_emb,
-            data_dropout=dropout_token,
         )
 
         # Decoder
         self.decoder = Decoder(
             layers=[
                 DecoderLayer(
-                    global_self_attention=GlobalSelfAttn(),
-                    local_self_attention=LocalSelfAttn(),
-                    global_cross_attention=GlobalCrossAttn(),
-                    local_cross_attention=LocalCrossAttn(),
+                    global_self_attention=self._attn_switch(
+                        global_self_attn,
+                        **attn_kwargs,
+                    ),
+                    local_self_attention=self._attn_switch(
+                        local_self_attn,
+                        **attn_kwargs,
+                    ),
+                    global_cross_attention=self._attn_switch(
+                        global_cross_attn,
+                        **attn_kwargs,
+                    ),
+                    local_cross_attention=self._attn_switch(
+                        local_cross_attn,
+                        **attn_kwargs,
+                    ),
                     d_model=d_model,
+                    time_windows=attn_time_windows,
+                    # decoder layers alternate using shifted windows, if applicable
+                    time_window_offset=2
+                    if use_shifted_time_windows and (l % 2 == 1)
+                    else 0,
                     d_ff=d_ff,
+                    # temporal embedding effectively has 1 variable
+                    # for the purposes of time windowing.
+                    d_yt=d_yt if embed_method == "spatio-temporal" else 1,
+                    d_yc=d_yc if embed_method == "spatio-temporal" else 1,
                     dropout_ff=dropout_ff,
+                    dropout_attn_out=dropout_attn_out,
                     activation=activation,
-                    post_norm=post_norm,
                     norm=norm,
                 )
                 for l in range(d_layers)
             ],
-            norm_layer=Normalization(method=norm, d_model=d_model)
-            if not post_norm
-            else None,
+            norm_layer=Normalization(norm, d_model=d_model) if use_final_norm else None,
             emb_dropout=dropout_emb,
-            data_dropout=dropout_token,
         )
 
         qprint = lambda _msg_: print(_msg_) if verbose else None
@@ -159,15 +240,20 @@ class Spacetimeformer(nn.Module):
         qprint(f"Time Embedding: {self.embedding.TIME}")
         qprint(f"Val Embedding: {self.embedding.VAL}")
         qprint(f"Given Embedding: {self.embedding.GIVEN}")
+        qprint(f"Null Value: {self.dec_embedding.null_value}")
+        qprint(f"Pad Value: {self.dec_embedding.pad_value}")
+        qprint(f"Reconstruction Dropout: {self.enc_embedding.data_drop}")
 
-        out_dim = 2 if self.embed_method == "spatio-temporal" else 2 * d_y
+        out_dim = 2 if self.embed_method == "spatio-temporal" else 2 * d_yt
+        recon_dim = 1 if self.embed_method == "spatio-temporal" else d_yc
+        
+        # final linear layers turn Transformer output into predictions
         self.forecaster = nn.Linear(d_model, out_dim, bias=True)
-        self.classifier = nn.Linear(d_model, d_y, bias=True)
-
-        self.d_y = d_y
+        self.reconstructor = nn.Linear(d_model, recon_dim, bias=True)
+        self.classifier = nn.Linear(d_model, d_yc, bias=True)
 
     def _fold_spatio_temporal(self, dec_out):
-        dec_out = dec_out.chunk(self.d_y, dim=1)
+        dec_out = dec_out.chunk(self.d_yt, dim=1)
         means = []
         log_stds = []
         for y in dec_out:
@@ -180,6 +266,10 @@ class Spacetimeformer(nn.Module):
 
     def forward(
         self,
+        enc_x,
+        enc_y,
+        dec_x,
+        dec_y,
         x_enc,
         x_mark_enc,
         x_dec,
@@ -190,31 +280,49 @@ class Spacetimeformer(nn.Module):
         output_attention=False,
     ):
         batch_size = x_enc.shape[0]
-
-        enc_vt_emb, enc_s_emb, enc_var_idx = self.embedding(
-            x_enc, x_mark_enc, is_encoder=True
+        # embed context sequence
+        enc_vt_emb, enc_s_emb, enc_var_idxs, enc_mask_seq = self.enc_embedding(
+            y=enc_y, x=enc_x
         )
-        enc_out, attns = self.encoder(
+        
+         # encode context sequence
+        enc_out, enc_self_attns = self.encoder(
             val_time_emb=enc_vt_emb,
             space_emb=enc_s_emb,
-            attn_mask=enc_self_mask,
+            self_mask_seq=enc_mask_seq,
             output_attn=output_attention,
         )
-        dec_vt_emb, dec_s_emb, dec_var_idx = self.embedding(
-            x_dec, x_mark_dec, is_encoder=False
-        )
-        dec_out = self.decoder(
+        
+         # embed target sequence
+        dec_vt_emb, dec_s_emb, _, dec_mask_seq = self.dec_embedding(y=dec_y, x=dec_x)
+        if enc_mask_seq is not None:
+            enc_dec_mask_seq = enc_mask_seq.clone()
+        else:
+            enc_dec_mask_seq = enc_mask_seq
+
+        # decode target sequence w/ encoded context
+        dec_out, dec_cross_attns = self.decoder(
             val_time_emb=dec_vt_emb,
             space_emb=dec_s_emb,
             cross=enc_out,
-            x_mask=dec_self_mask,
-            cross_mask=dec_enc_mask,
+            self_mask_seq=dec_mask_seq,
+            cross_mask_seq=enc_dec_mask_seq,
+            output_cross_attn=output_attention,
         )
-
+        
+        # forecasting predictions
         forecast_out = self.forecaster(dec_out)
-
+        # reconstruction predictions
+        recon_out = self.reconstructor(enc_out)
+        if self.embed_method == "spatio-temporal":
+            # fold flattened spatiotemporal format back into (batch, length, d_yt)
+            forecast_out = FoldForPred(forecast_out, dy=self.d_yt)
+            recon_out = FoldForPred(recon_out, dy=self.d_yc)
+        forecast_out = forecast_out[:, self.start_token_len :, :]
+        
         if self.embed_method == "spatio-temporal":
             means, log_stds = self._fold_spatio_temporal(forecast_out)
+            recon_out = FoldForPred(recon_out, dy=self.d_yc)
         else:
             forecast_out = forecast_out[:, self.start_token_len :, :]
             means, log_stds = forecast_out.chunk(2, dim=-1)
@@ -224,143 +332,80 @@ class Spacetimeformer(nn.Module):
 
         pred_distrib = pyd.Normal(means, stds)
 
-        if dec_var_idx is not None and enc_var_idx is not None:
+        if enc_var_idxs is not None:
             # note that detaching the input like this means the transformer layers
             # are not optimizing for classification accuracy (but the linear classifier
             # layer still is). This is just a test to see how much unique spatial info
             # remains in the output after all the global attention layers.
-            classifier_dec_out = self.classifier(dec_out.detach())
             classifier_enc_out = self.classifier(enc_out.detach())
-            classifier_out = torch.cat((classifier_enc_out, classifier_dec_out), dim=1)
-            var_idxs = torch.cat((enc_var_idx, dec_var_idx), dim=1)
         else:
-            classifier_out, var_idxs = None, None
+            classifier_enc_out, enc_var_idxs = None, None
 
-        return pred_distrib, (classifier_out, var_idxs), attns
+        return (
+            forecast_out,
+            recon_out,
+            (classifier_enc_out, enc_var_idxs),
+            (enc_self_attns, dec_cross_attns),
+        )
 
-    def _global_attn_switch(
+    def _attn_switch(
         self,
-        global_attn_str: str,
+        attn_str: str,
         d_model: int,
         n_heads: int,
-        d_y: int,
+        d_qk: int,
+        d_v: int,
         dropout_qkv: float,
-        dropout_attn_out: float,
+        dropout_attn_matrix: float,
         attn_factor: int,
         performer_attn_kernel: str,
         performer_redraw_interval: int,
     ):
 
-        if global_attn_str == "full":
+        if attn_str == "full":
             # standard full (n^2) attention
-            Attn = partial(
-                AttentionLayer,
-                attention=partial(FullAttention, attention_dropout=dropout_attn_out),
+            Attn = AttentionLayer(
+                attention=partial(FullAttention, attention_dropout=dropout_attn_matrix),
                 d_model=d_model,
+                d_queries_keys=d_qk,
+                d_values=d_v,
                 n_heads=n_heads,
                 mix=False,
                 dropout_qkv=dropout_qkv,
             )
-        elif global_attn_str == "prob":
-            # Informer-style Prob self Full cross attention
-            Attn = partial(
-                AttentionLayer,
+        elif attn_str == "prob":
+            # Informer-style ProbSparse cross attention
+            Attn = AttentionLayer(
                 attention=partial(
                     ProbAttention,
                     factor=attn_factor,
-                    attention_dropout=dropout_attn_out,
+                    attention_dropout=dropout_attn_matrix,
                 ),
                 d_model=d_model,
+                d_queries_keys=d_qk,
+                d_values=d_v,
                 n_heads=n_heads,
                 mix=False,
                 dropout_qkv=dropout_qkv,
             )
-        elif global_attn_str == "performer":
+        elif attn_str == "performer":
             # Performer Linear Attention
-            Attn = partial(
-                AttentionLayer,
+            Attn = AttentionLayer(
                 attention=partial(
                     PerformerAttention,
-                    dim_heads=(d_model // n_heads),
+                    dim_heads=d_qk,
                     kernel=performer_attn_kernel,
                     feature_redraw_interval=performer_redraw_interval,
                 ),
                 d_model=d_model,
+                d_queries_keys=d_qk,
+                d_values=d_v,
                 n_heads=n_heads,
                 mix=False,
                 dropout_qkv=dropout_qkv,
             )
-        elif global_attn_str == "nystromformer":
-            Attn = partial(
-                NystromSelfAttention,
-                d_model=d_model,
-                n_heads=n_heads,
-                attention_dropout=dropout_attn_out,
-            )
-        elif global_attn_str == "benchmark":
-            Attn = BenchmarkAttention
-        elif global_attn_str == "none":
-            Attn = lambda: None
+        elif attn_str == "none":
+            Attn = None
         else:
-            raise ValueError(f"Unrecognized Global Attention '{global_attn_str}'")
-        return Attn
-
-    def _local_attn_switch(
-        self,
-        local_attn_str: str,
-        d_y: int,
-        d_model: int,
-        n_heads: int,
-        dropout_qkv: float,
-        dropout_attn_out: float,
-        attn_factor: int,
-        performer_attn_kernel: str,
-        performer_redraw_interval: int,
-    ):
-
-        if local_attn_str == "prob":
-            # Prob Local Attention
-            Attn = partial(
-                LocalAttentionLayer,
-                attention=partial(
-                    ProbAttention,
-                    factor=attn_factor,
-                    attention_dropout=dropout_attn_out,
-                ),
-                d_model=d_model,
-                n_heads=n_heads,
-                dropout_qkv=dropout_qkv,
-                d_y=d_y,
-            )
-        elif local_attn_str == "full":
-            Attn = partial(
-                LocalAttentionLayer,
-                attention=partial(FullAttention, attention_dropout=dropout_attn_out),
-                d_model=d_model,
-                n_heads=n_heads,
-                dropout_qkv=dropout_qkv,
-                d_y=d_y,
-            )
-        elif local_attn_str == "performer":
-            # Performer Local Attention
-            Attn = partial(
-                LocalAttentionLayer,
-                attention=partial(
-                    PerformerAttention,
-                    dim_heads=(d_model // n_heads),
-                    kernel=performer_attn_kernel,
-                    feature_redraw_interval=performer_redraw_interval,
-                ),
-                d_model=d_model,
-                n_heads=n_heads,
-                dropout_qkv=dropout_qkv,
-                d_y=d_y,
-            )
-        elif local_attn_str == "benchmark":
-            Attn = BenchmarkAttention
-        elif local_attn_str == "none":
-            # Ablation of Local Attention
-            Attn = lambda: None
-        else:
-            raise ValueError(f"Unrecognized Local Attention '{local_attn_str}'")
+            raise ValueError(f"Unrecognized attention str code '{attn_str}'")
         return Attn
