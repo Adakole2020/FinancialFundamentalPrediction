@@ -7,6 +7,8 @@ from torch.utils.data import DataLoader, Dataset
 
 import spacetimeformer as stf
 from spacetimeformer.data import DataModule
+from typing import List
+import pandas as pd
 
 class FundamentalsCSVSeries:
     def __init__(
