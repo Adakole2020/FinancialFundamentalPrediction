@@ -11,7 +11,7 @@ from spacetimeformer.data import DataModule
 class FundamentalsCSVSeries:
     def __init__(
         self,
-        val_split: int | float = 0.15,  # int or float indicating the split for the validation set
+        val_split: float = 0.15,  # int or float indicating the split for the validation set
         test_split: float = 0.15, # int or float indicating the split for the test set
         context_length: int = 18, # Use the context of 18 quarters to predict the next 8 quarters
         prediction_length: int = 8,

@@ -33,6 +33,9 @@ tensorflow-hub
 build/
 dist/
 
+# Virtual environment
+venv/
+
 # Weights & Biases outputs
 wandb/
 
