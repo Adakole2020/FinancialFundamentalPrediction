@@ -6,5 +6,6 @@ from . import lr_scheduler
 from . import callbacks
 from . import eval_stats
 from . import plot
+from . import linear_model
 from . import spacetimeformer_model
 from . import train
