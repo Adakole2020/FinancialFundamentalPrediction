@@ -1,4 +1,5 @@
 from hyperopt import hp, fmin, tpe, Trials, STATUS_OK
+import numpy as np
 
 from spacetimeformer.train import create_parser
 from spacetimeformer.spacetimeformer_model import Spacetimeformer_Forecaster
@@ -70,12 +71,16 @@ def param_optimizer(args):
         forecaster = Spacetimeformer_Forecaster(x_dim=2, yc_dim=35, yt_dim = 1, categorical_dict_sizes = [11,25,74,163], **params)
         data_module = FundamentalsDataModule(
             dataset_kwargs={
-                "csv_time_series": dset,
                 "context_length": params.context_points,
                 "prediction_length": params.target_points,
             },
             batch_size=config.batch_size,
         )
+        inv_scaler = dset.reverse_scaling
+        scaler = dset.apply_scaling
+        forecaster.set_inv_scaler(inv_scaler)
+        forecaster.set_scaler(scaler)
+        forecaster.set_null_values(np.NAN)
             
         trainer = pl.Trainer(
             max_epochs=20,
