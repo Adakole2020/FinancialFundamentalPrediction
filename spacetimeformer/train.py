@@ -21,7 +21,6 @@ def create_parser():
     stf.data.CSVTimeSeries.add_cli(parser)
     stf.data.CSVTorchDset.add_cli(parser)
     stf.data.DataModule.add_cli(parser)
-    stf.data.FundamentalsDset.add_cli(parser)
     stf.data.FundamentalsDataModule.add_cli(parser)
 
     stf.spacetimeformer_model.Spacetimeformer_Forecaster.add_cli(parser)

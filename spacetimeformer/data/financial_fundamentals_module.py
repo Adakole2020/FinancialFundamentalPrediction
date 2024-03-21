@@ -211,26 +211,6 @@ class FundamentalsDset(Dataset):
         else:
             return self._torch(self.series.test_data[:, i])
         
-    @classmethod
-    def add_cli(self, parser):
-        parser.add_argument(
-            "--context_points",
-            type=int,
-            default=18,
-            help="number of previous timesteps given to the model in order to make predictions",
-        )
-        parser.add_argument(
-            "--target_points",
-            type=int,
-            default=8,
-            help="number of future timesteps to predict",
-        )
-        parser.add_argument(
-            "--time_resolution",
-            type=int,
-            default=1,
-        )
-        
         
 class FundamentalsDataModule(DataModule):
     def __init__(

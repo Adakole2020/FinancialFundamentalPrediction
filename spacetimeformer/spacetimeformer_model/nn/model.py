@@ -8,7 +8,7 @@ import torch.distributions as pyd
 from einops import rearrange, repeat
 
 from .extra_layers import ConvBlock, Normalization, FoldForPred
-from .encoder import Encoder, EncoderLayer, VariableDownsample, Normalization
+from .encoder import Encoder, EncoderLayer
 from .decoder import Decoder, DecoderLayer
 from .attn import (
     FullAttention,
@@ -19,7 +19,7 @@ from .attn import (
     BenchmarkAttention,
     NystromSelfAttention,
 )
-from .embed import SpacetimeformerEmbedding
+from .embed import SpacetimeformerEmbeddingWithCategoricals
 from .data_dropout import ReconstructionDropout
 
 
@@ -106,7 +106,7 @@ class Spacetimeformer(nn.Module):
         )
         
         # embeddings. seperate enc/dec in case the variable indices are not aligned
-        self.enc_embedding = SpacetimeformerEmbedding(
+        self.enc_embedding = SpacetimeformerEmbeddingWithCategoricals(
             d_y=d_yc,
             d_x=d_x,
             d_model=d_model,
@@ -123,7 +123,7 @@ class Spacetimeformer(nn.Module):
             categorical_dict_sizes=categorical_dict_sizes,
             categorical_embedding_dim=categorical_embedding_dim,
         )
-        self.dec_embedding = SpacetimeformerEmbedding(
+        self.dec_embedding = SpacetimeformerEmbeddingWithCategoricals(
             d_y=d_yt,
             d_x=d_x,
             d_model=d_model,

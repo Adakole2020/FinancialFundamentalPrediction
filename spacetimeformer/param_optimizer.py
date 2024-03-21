@@ -1,9 +1,34 @@
 from hyperopt import hp, fmin, tpe, Trials, STATUS_OK
 import numpy as np
 
-from spacetimeformer.train import create_parser
 from spacetimeformer.spacetimeformer_model import Spacetimeformer_Forecaster
 from spacetimeformer.data import FundamentalsDataModule
+from argparse import ArgumentParser
+import sys
+
+import pytorch_lightning as pl
+
+import warnings
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+def create_parser():
+    parser = ArgumentParser()
+
+    FundamentalsDataModule.add_cli(parser)
+
+    Spacetimeformer_Forecaster.add_cli(parser)
+
+    parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--accumulate", type=int, default=1)
+    parser.add_argument("--limit_val_batches", type=float, default=1.0)
+    parser.add_argument("--patience", type=int, default=5)
+
+    if len(sys.argv) > 3 and sys.argv[3] == "-h":
+        parser.print_help()
+        sys.exit(0)
+
+    return parser
 
 def param_optimizer(args):
     # Define the search space for each hyperparameter
@@ -19,7 +44,6 @@ def param_optimizer(args):
         "linear_shared_weights": hp.choice("linear_shared_weights", [True, False]),
         "use_seasonal_decomp": hp.choice("use_seasonal_decomp", [True, False]),
         "batch_size": hp.choice("batch_size", [1, 2, 4, 8, 16, 32, 64, 128]),
-        "start_token_len": hp.quniform("start_token_len", 0, 10, 1),
         "d_model": hp.choice("d_model", [32, 48, 64, 96, 128, 256, 512]),
         "d_qk": hp.choice("d_qk", [32, 48, 64, 96, 128, 256, 512]),
         "d_v": hp.choice("d_v", [32, 48, 64, 96, 128, 256, 512]),
@@ -61,38 +85,83 @@ def param_optimizer(args):
 
     # Define an objective function for hyperparameter optimization
     def objective(search_params):
-        params = {**args, **search_params}
-        if hasattr(config, "context_points") and hasattr(config, "target_points"):
-            max_seq_len = params.context_points + params.target_points
-        elif hasattr(config, "max_len"):
-            max_seq_len = params.max_len
-        else:
-            raise ValueError("Undefined max_seq_len")
-        forecaster = Spacetimeformer_Forecaster(x_dim=2, yc_dim=35, yt_dim = 1, categorical_dict_sizes = [11,25,74,163], **params)
+        print("search_params", search_params)
+        print("args", vars(args))
+        params = {**vars(args), **search_params}
+        forecaster = Spacetimeformer_Forecaster(d_x=2, d_yc=35, d_yt = 1, categorical_dict_sizes = [11,25,74,163], 
+        start_token_len=0,
+        attn_factor=params["attn_factor"],
+        d_model=params["d_model"],
+        d_queries_keys=params["d_qk"],
+        d_values=params["d_v"],
+        n_heads=params["n_heads"],
+        e_layers=params["enc_layers"],
+        d_layers=params["dec_layers"],
+        d_ff=params["d_ff"],
+        dropout_emb=params["dropout_emb"],
+        dropout_attn_out=params["dropout_attn_out"],
+        dropout_attn_matrix=params["dropout_attn_matrix"],
+        dropout_qkv=params["dropout_qkv"],
+        dropout_ff=params["dropout_ff"],
+        pos_emb_type=params["pos_emb_type"],
+        use_final_norm=not params["no_final_norm"],
+        global_self_attn=params["global_self_attn"],
+        local_self_attn=params["local_self_attn"],
+        global_cross_attn=params["global_cross_attn"],
+        local_cross_attn=params["local_cross_attn"],
+        performer_kernel=params["performer_kernel"],
+        performer_redraw_interval=params["performer_redraw_interval"],
+        attn_time_windows=params["attn_time_windows"],
+        use_shifted_time_windows=params["use_shifted_time_windows"],
+        norm=params["norm"],
+        activation=params["activation"],
+        init_lr=params["init_lr"],
+        base_lr=params["base_lr"],
+        warmup_steps=params["warmup_steps"],
+        decay_factor=params["decay_factor"],
+        initial_downsample_convs=params["initial_downsample_convs"],
+        intermediate_downsample_convs=params["intermediate_downsample_convs"],
+        embed_method=params["embed_method"],
+        l2_coeff=params["l2_coeff"],
+        loss=params["loss"],
+        class_loss_imp=params["class_loss_imp"],
+        recon_loss_imp=params["recon_loss_imp"],
+        time_emb_dim=params["time_emb_dim"],
+        categorical_embedding_dim=params["categorical_embedding_dim"],
+        null_value=np.NAN,
+        pad_value=None,
+        linear_window=params["linear_window"],
+        use_revin=params["use_revin"],
+        linear_shared_weights=params["linear_shared_weights"],
+        use_seasonal_decomp=params["use_seasonal_decomp"],
+        recon_mask_skip_all=params["recon_mask_skip_all"],
+        recon_mask_max_seq_len=params["recon_mask_max_seq_len"],
+        recon_mask_drop_seq=params["recon_mask_drop_seq"],
+        recon_mask_drop_standard=params["recon_mask_drop_standard"],
+        recon_mask_drop_full=params["recon_mask_drop_full"],)
         data_module = FundamentalsDataModule(
             dataset_kwargs={
-                "context_length": params.context_points,
-                "prediction_length": params.target_points,
+                "context_length": params["context_points"],
+                "prediction_length": params["target_points"],
             },
-            batch_size=config.batch_size,
+            batch_size=params["batch_size"],
         )
         inv_scaler = dset.reverse_scaling
         scaler = dset.apply_scaling
         forecaster.set_inv_scaler(inv_scaler)
         forecaster.set_scaler(scaler)
-        forecaster.set_null_values(np.NAN)
             
         trainer = pl.Trainer(
             max_epochs=20,
             gpus=18,
             logger=None,
             accelerator="dp",
-            gradient_clip_val=params.grad_clip_norm,
+            gradient_clip_val=params["grad_clip_norm"],
             gradient_clip_algorithm="norm",
-            overfit_batches=20 if params.debug else 0,
-            accumulate_grad_batches=params.accumulate,
+            overfit_batches=20 if params["debug"] else 0,
+            accumulate_grad_batches=params["accumulate"],
             sync_batchnorm=True,
-            limit_val_batches=params.limit_val_batches,
+            limit_val_batches=params["limit_val_batches"],
         )
         # Train
         trainer.fit(forecaster, datamodule=data_module)
@@ -117,6 +186,8 @@ def param_optimizer(args):
     )
     print("Best hyperparameters:", best_hyperparams)
     
+
+
     
 if __name__ == "__main__":
     # CLI
