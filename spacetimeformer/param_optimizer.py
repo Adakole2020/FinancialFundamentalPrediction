@@ -84,7 +84,7 @@ def param_optimizer(args):
             
         trainer = pl.Trainer(
             max_epochs=20,
-            gpus=2,
+            gpus=18,
             logger=None,
             accelerator="dp",
             gradient_clip_val=params.grad_clip_norm,
