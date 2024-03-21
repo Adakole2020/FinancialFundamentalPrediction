@@ -327,7 +327,7 @@ class AttentionLayer(nn.Module):
     ):
         super(AttentionLayer, self).__init__()
 
-        d_keys = d_keys or (d_model // n_heads)
+        d_queries_keys = d_queries_keys or (d_model // n_heads)
         d_values = d_values or (d_model // n_heads)
 
         self.inner_attention = attention()

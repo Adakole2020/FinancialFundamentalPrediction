@@ -89,8 +89,8 @@ class FundamentalsCSVSeries:
             ctxt_y, trgt_y = prepare_forecasting_data(mini_df, fcst_history=context_length, fcst_horizon=prediction_length, x_vars=self.context_cols, y_vars=self.target_cols)
             ctxt_x, trgt_x = prepare_forecasting_data(mini_df, fcst_history=context_length, fcst_horizon=prediction_length, x_vars=self.time_cols, y_vars=self.time_cols)
 
-            test_start = math.ceil(test_split*ctxt_x.shape[0]) if test_split < 1 else test_split
-            valid_start = math.ceil(val_split*ctxt_x.shape[0]) + test_start if val_split < 1 else val_split + test_start
+            test_start = math.ceil(test_split*ctxt_x.shape[0]) if test_split < 1 else int(test_split)
+            valid_start = math.ceil(val_split*ctxt_x.shape[0]) + test_start if val_split < 1 else int(val_split) + test_start
 
             if test_start != 0:
                 ctxt_y_test = np.concatenate((ctxt_y_test, ctxt_y[-test_start:]), axis=0)
@@ -236,7 +236,6 @@ class FundamentalsDataModule(DataModule):
         collate_fn=None,
         overfit: bool = False,
     ):
-        super().__init__()
         self.batch_size = batch_size
         if "split" in dataset_kwargs.keys():
             del dataset_kwargs["split"]
