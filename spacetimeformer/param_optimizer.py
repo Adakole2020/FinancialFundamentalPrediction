@@ -2,7 +2,7 @@ from hyperopt import hp, fmin, tpe, Trials, STATUS_OK
 import numpy as np
 
 from spacetimeformer.spacetimeformer_model import Spacetimeformer_Forecaster
-from spacetimeformer.data import FundamentalsDataModule
+from spacetimeformer.data import FundamentalsDataModule, FundamentalsCSVSeries
 from argparse import ArgumentParser
 import sys
 
@@ -15,6 +15,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 def create_parser():
     parser = ArgumentParser()
 
+    FundamentalsCSVSeries.add_cli(parser)
     FundamentalsDataModule.add_cli(parser)
 
     Spacetimeformer_Forecaster.add_cli(parser)
@@ -89,6 +90,7 @@ def param_optimizer(args):
         print("args", vars(args))
         params = {**vars(args), **search_params}
         forecaster = Spacetimeformer_Forecaster(d_x=2, d_yc=35, d_yt = 1, categorical_dict_sizes = [11,25,74,163], 
+        max_seq_len=params["context_points"] + params["target_points"],
         start_token_len=0,
         attn_factor=params["attn_factor"],
         d_model=params["d_model"],
@@ -130,7 +132,7 @@ def param_optimizer(args):
         categorical_embedding_dim=params["categorical_embedding_dim"],
         null_value=np.NAN,
         pad_value=None,
-        linear_window=params["linear_window"],
+        linear_window=int(params["linear_window"]),
         use_revin=params["use_revin"],
         linear_shared_weights=params["linear_shared_weights"],
         use_seasonal_decomp=params["use_seasonal_decomp"],

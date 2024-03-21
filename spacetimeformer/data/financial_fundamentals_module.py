@@ -185,6 +185,21 @@ class FundamentalsCSVSeries:
         # slicing from the target cols
         dim = array.shape[-1]
         return (array * self._scaler.scale_[:dim]) + self._scaler.mean_[:dim]
+    
+    @classmethod
+    def add_cli(self, parser):
+        parser.add_argument(
+            "--context_points",
+            type=int,
+            default=18,
+            help="number of previous timesteps given to the model in order to make predictions",
+        )
+        parser.add_argument(
+            "--target_points",
+            type=int,
+            default=8,
+            help="number of future timesteps to predict",
+        )
         
     
 class FundamentalsDset(Dataset):
