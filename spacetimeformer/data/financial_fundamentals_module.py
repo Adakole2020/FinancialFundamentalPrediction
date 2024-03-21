@@ -9,6 +9,7 @@ import spacetimeformer as stf
 from spacetimeformer.data import DataModule
 from typing import List
 import pandas as pd
+import numpy as np
 
 class FundamentalsCSVSeries:
     def __init__(
@@ -23,26 +24,18 @@ class FundamentalsCSVSeries:
         ],
         normalize: bool = True,):
         
-        raw_df = pd.read_csv("https://docs.google.com/spreadsheets/d/e/2PACX-1vSdLYZtOd12U14IGzypjzIX1q69OMuhW_AsTaOgdZc7UgqJSvuBIC8V85kZeQHnqiCxaB7Ezsru_ri7/pubhtml?gid=198200420&single=true")
+        raw_df = pd.read_csv("https://docs.google.com/spreadsheets/d/e/2PACX-1vSdLYZtOd12U14IGzypjzIX1q69OMuhW_AsTaOgdZc7UgqJSvuBIC8V85kZeQHnqiCxaB7Ezsru_ri7/pub?gid=198200420&single=true&output=csv")
         raw_df = raw_df[raw_df['quarter'].notnull()].reset_index(drop = True)
         raw_df['eps_surprise'] = np.where(raw_df['eps_normalized_consensus_mean'] == 0, raw_df['eps_normalized_actual'], (raw_df["eps_normalized_actual"] - raw_df["eps_normalized_consensus_mean"])/raw_df["eps_normalized_consensus_mean"])
         raw_df.drop(columns = ["eps_normalized_actual"], inplace = True)
         raw_df = raw_df.sort_values(['symbol', 'quarter']).reset_index(drop=True)
+        target_cols = ["eps_surprise"]
+        group_cols = ["symbol"]
         
-        self.time_col_name = time_col_name
+        self.time_col_name = 'quarter'
         assert self.time_col_name in raw_df.columns
-        
-        if not target_cols:
-            target_cols = raw_df.columns.tolist()
-            target_cols.remove(time_col_name)
-            
-        if ignore_cols:
-            if ignore_cols == "all":
-                ignore_cols = raw_df.columns.difference(target_cols).tolist()
-                ignore_cols.remove(self.time_col_name)
-            raw_df.drop(columns=ignore_cols, inplace=True)
 
-        time_df = pd.to_datetime(raw_df[self.time_col_name], format="%Y-%m")
+        time_df = pd.to_datetime(raw_df[self.time_col_name])
         df = stf.data.timefeatures.time_features(
             time_df,
             raw_df,
@@ -50,8 +43,7 @@ class FundamentalsCSVSeries:
             use_features=time_features,
         )
         self.time_cols = df.columns.difference(raw_df.columns)
-        self.target_cols = ["eps_surprise"]
-        group_cols = ["symbol"]
+        self.target_cols = target_cols
         self.context_cols = df.columns[~(df.columns.isin([*self.time_cols, *self.group_cols]))]
         self.categorical_context_cols = ["Sector", "Industry Group", "Industry", "Sub-Industry"]
         for col in self.categorical_context_cols:

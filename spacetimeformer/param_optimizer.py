@@ -140,8 +140,8 @@ def param_optimizer(args):
             batch_size=params["batch_size"],
             workers=params["workers"],
         )
-        inv_scaler = dset.reverse_scaling
-        scaler = dset.apply_scaling
+        inv_scaler = data_module.series.reverse_scaling
+        scaler = data_module.series.apply_scaling
         forecaster.set_inv_scaler(inv_scaler)
         forecaster.set_scaler(scaler)
             
