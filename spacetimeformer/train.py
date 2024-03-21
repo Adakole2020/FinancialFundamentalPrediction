@@ -13,31 +13,16 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import spacetimeformer as stf
 
-_MODELS = ["spacetimeformer"]
-
-_DSETS = [
-    "FUNDAMENTALS"
-]
-
 
 def create_parser():
-    model = sys.argv[1]
-    dset = sys.argv[2]
-
-    # Throw error now before we get confusing parser issues
-    assert (
-        model in _MODELS
-    ), f"Unrecognized model (`{model}`). Options include: {_MODELS}"
-    assert dset in _DSETS, f"Unrecognized dset (`{dset}`). Options include: {_DSETS}"
-
     parser = ArgumentParser()
-    parser.add_argument("model")
-    parser.add_argument("dset")
 
 
     stf.data.CSVTimeSeries.add_cli(parser)
     stf.data.CSVTorchDset.add_cli(parser)
     stf.data.DataModule.add_cli(parser)
+    stf.data.FundamentalsDset.add_cli(parser)
+    stf.data.FundamentalsDataModule.add_cli(parser)
 
     stf.spacetimeformer_model.Spacetimeformer_Forecaster.add_cli(parser)
 
@@ -68,10 +53,6 @@ def create_parser():
 def create_model(config):
     x_dim, yc_dim, yt_dim = 2, 35, 1
     categorical_dict_sizes = [11,25,74,163]
-
-    assert x_dim is not None
-    assert yc_dim is not None
-    assert yt_dim is not None
 
     if hasattr(config, "context_points") and hasattr(config, "target_points"):
         max_seq_len = config.context_points + config.target_points
@@ -148,34 +129,31 @@ def create_dset(config):
     PLOT_VAR_NAMES = None
     PAD_VAL = None
     
-    
-    if config.dset == "FUNDAMENTALS":
-        data_path="./data/fundamentals.csv"
-        dset = stf.data.CSVTimeSeries(
-            data_path=data_path,
-            target_cols=["eps_surprise"],
-            ignore_cols=["symbol"],
-            time_col_name="quarter",
-            time_features=["year", "month"],
-        )
-        DATA_MODULE = stf.data.DataModule(
-            datasetCls=stf.data.CSVTorchDset,
-            dataset_kwargs={
-                "csv_time_series": dset,
-                "context_points": config.context_points,
-                "target_points": config.target_points,
-                "time_resolution": config.time_resolution,
-            },
-            batch_size=config.batch_size,
-            workers=config.workers,
-            overfit=args.overfit,
-        )
-        INV_SCALER = dset.reverse_scaling
-        SCALER = dset.apply_scaling
-        NULL_VAL = None
-        # PAD_VAL = -32.0
-        PLOT_VAR_NAMES = target_cols
-        PLOT_VAR_IDXS = [i for i in range(len(target_cols))]
+    data_path="./data/fundamentals.csv"
+    dset = stf.data.CSVTimeSeries(
+        data_path=data_path,
+        target_cols=["eps_surprise"],
+        ignore_cols=["symbol"],
+        time_col_name="quarter",
+        time_features=["year", "month"],
+    )
+    DATA_MODULE = stf.data.DataModule(
+        datasetCls=stf.data.CSVTorchDset,
+        dataset_kwargs={
+            "csv_time_series": dset,
+            "context_points": config.context_points,
+            "target_points": config.target_points,
+            "time_resolution": config.time_resolution,
+        },
+        batch_size=config.batch_size,
+        workers=config.workers,
+        overfit=args.overfit,
+    )
+    INV_SCALER = dset.reverse_scaling
+    SCALER = dset.apply_scaling
+    # PAD_VAL = -32.0
+    PLOT_VAR_NAMES = target_cols
+    PLOT_VAR_IDXS = [i for i in range(len(target_cols))]
         
     return (
         DATA_MODULE,
