@@ -9,8 +9,6 @@ import numpy as np
 
 import spacetimeformer as stf
 
-from sam import SAM
-
 
 class Forecaster(pl.LightningModule, ABC):
     def __init__(
