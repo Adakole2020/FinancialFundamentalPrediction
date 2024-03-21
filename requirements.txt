@@ -21,3 +21,4 @@ chardet
 opt_einsum
 torchmetrics==0.5.1
 tsai
+hyperopt
