@@ -324,7 +324,7 @@ class Forecaster(pl.LightningModule, ABC):
         parser.add_argument("--linear_window", type=int, default=0)
         parser.add_argument("--use_revin", action="store_true")
         parser.add_argument(
-            "--loss", type=str, default="mse", choices=["mse", "mae", "nll", "smape", "rse"]
+            "--loss", type=str, default="nll", choices=["mse", "mae", "nll", "smape", "rse"]
         )
         parser.add_argument("--linear_shared_weights", action="store_true")
         parser.add_argument("--use_seasonal_decomp", action="store_true")

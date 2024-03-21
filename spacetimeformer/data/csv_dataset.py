@@ -4,7 +4,7 @@ import os
 import tqdm
 
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
 import pandas as pd
 import numpy as np
 import pytorch_lightning as pl
