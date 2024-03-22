@@ -7,6 +7,7 @@ import numpy as np
 import spacetimeformer as stf
 
 from .extra_layers import ConvBlock, Flatten
+from einops import repeat
 
 class SpacetimeformerEmbedding(nn.Module):
     def __init__(
@@ -198,7 +199,7 @@ class SpacetimeformerEmbedding(nn.Module):
         
         # position emb ("local_emb")
         local_pos = repeat(
-            torch.arange(length).to(x.device), f"length -> {batch} ({dy} length)"
+            torch.arange(length).to(x.device), f"length -> {bs} ({d_y} length)"
         )
         if self.position_emb == "t2v":
             # periodic pos emb
@@ -213,7 +214,7 @@ class SpacetimeformerEmbedding(nn.Module):
         if not self.TIME:
             x = torch.zeros_like(x)
         x = torch.nan_to_num(x)
-        x = repeat(x, f"batch len x_dim -> batch ({dy} len) x_dim")
+        x = repeat(x, f"batch len x_dim -> batch ({d_y} len) x_dim")
         time_emb = self.time_emb(x).repeat(1, d_y, 1) # [bs, length, d_x] -> [bs, length * d_y, time_emb_dim * d_x]
         
         # protect against NaNs in y, but keep track for Given emb
@@ -256,7 +257,7 @@ class SpacetimeformerEmbedding(nn.Module):
 
         # space embedding
         var_idx = repeat(
-            torch.arange(dy).long().to(x.device), f"dy -> {batch} (dy {length})"
+            torch.arange(dy).long().to(x.device), f"dy -> {bs} (dy {length})"
         )
         var_idx_true = var_idx.clone()
         if not self.use_space:
@@ -422,10 +423,11 @@ class SpacetimeformerEmbeddingWithCategoricals(SpacetimeformerEmbedding):
             torch.Tensor: Embedded values, variable embeddings, and variable indices.
         """
         bs, length, d_y = y.shape
+        print(y.shape)
         
         # position emb ("local_emb")
         local_pos = repeat(
-            torch.arange(length).to(x.device), f"length -> {batch} ({dy} length)"
+            torch.arange(length).to(x.device), f"length -> {bs} ({d_y} length)"
         )
         if self.position_emb == "t2v":
             # periodic pos emb
@@ -440,7 +442,9 @@ class SpacetimeformerEmbeddingWithCategoricals(SpacetimeformerEmbedding):
         if not self.TIME:
             x = torch.zeros_like(x)
         x = torch.nan_to_num(x)
-        x = repeat(x, f"batch len x_dim -> batch ({dy} len) x_dim")
+        print(x.shape)
+        x = repeat(x, f"batch len x_dim -> batch ({d_y} len) x_dim")
+        print(x.shape)
         time_emb = self.time_emb(x).repeat(1, d_y, 1) # [bs, length, d_x] -> [bs, length * d_y, time_emb_dim * d_x]
         
         # protect against NaNs in y, but keep track for Given emb
@@ -502,7 +506,7 @@ class SpacetimeformerEmbeddingWithCategoricals(SpacetimeformerEmbedding):
 
         # space embedding
         var_idx = repeat(
-            torch.arange(dy).long().to(x.device), f"dy -> {batch} (dy {length})"
+            torch.arange(dy).long().to(x.device), f"dy -> {bs} (dy {length})"
         )
         var_idx_true = var_idx.clone()
         if not self.use_space:
