@@ -267,6 +267,7 @@ class Spacetimeformer(nn.Module):
         self.classifier = nn.Linear(d_model, d_yc, bias=True)
 
     def _fold_spatio_temporal(self, dec_out):
+        print(dec_out.shape)
         dec_out = dec_out.chunk(self.d_yt, dim=1)
         means = []
         log_stds = []
@@ -323,10 +324,10 @@ class Spacetimeformer(nn.Module):
         forecast_out = self.forecaster(dec_out)
         # reconstruction predictions
         recon_out = self.reconstructor(enc_out)
-        if self.embed_method == "spatio-temporal":
-            # fold flattened spatiotemporal format back into (batch, length, d_yt)
-            forecast_out = FoldForPred(forecast_out, dy=self.d_yt)
-            recon_out = FoldForPred(recon_out, dy=self.d_yc)
+        # if self.embed_method == "spatio-temporal":
+        #     # fold flattened spatiotemporal format back into (batch, length, d_yt)
+        #     forecast_out = FoldForPred(forecast_out, dy=self.d_yt)
+        #     recon_out = FoldForPred(recon_out, dy=self.d_yc)
         forecast_out = forecast_out[:, self.start_token_len :, :]
         
         if self.embed_method == "spatio-temporal":

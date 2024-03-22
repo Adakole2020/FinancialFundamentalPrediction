@@ -243,7 +243,7 @@ class Spacetimeformer_Forecaster(stf.Forecaster):
 
         #forecast (target seq prediction) loss
         forecast_loss, forecast_mask = self.forecasting_loss(
-            outputs=outputs, y_t=y_t, time_mask=time_mask
+            outputs=forecast_out, y_t=y_t, time_mask=time_mask
         )
         
         if self.recon_loss_imp > 0:
@@ -342,6 +342,7 @@ class Spacetimeformer_Forecaster(stf.Forecaster):
                 "monitor": "val/loss",
             },
         }
+
 
     @classmethod
     def add_cli(self, parser):

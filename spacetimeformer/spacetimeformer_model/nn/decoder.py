@@ -73,7 +73,7 @@ class DecoderLayer(nn.Module):
         self.norm4 = Normalization(method=norm, d_model=d_model)
         self.norm5 = Normalization(method=norm, d_model=d_model)
 
-        self.dropout = nn.Dropout(dropout_ff)
+        self.dropout_ff = nn.Dropout(dropout_ff)
         self.dropout_attn_out = nn.Dropout(dropout_attn_out)
         self.activation = F.relu if activation == "relu" else F.gelu
         self.time_windows = time_windows
