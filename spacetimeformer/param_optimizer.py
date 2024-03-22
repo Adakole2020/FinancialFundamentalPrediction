@@ -8,6 +8,9 @@ import sys
 
 import pytorch_lightning as pl
 
+pl.seed_everything(123, workers=True)
+rstate = np.random.default_rng(123)
+
 import warnings
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -22,7 +25,6 @@ def create_parser():
 
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--accumulate", type=int, default=1)
-    parser.add_argument("--limit_val_batches", type=float, default=1.0)
     parser.add_argument("--patience", type=int, default=5)
 
     if len(sys.argv) > 3 and sys.argv[3] == "-h":
@@ -147,15 +149,14 @@ def param_optimizer(args):
             
         trainer = pl.Trainer(
             max_epochs=20,
-            gpus=18,
+            # gpus=18,
             logger=None,
-            accelerator="dp",
+            accelerator='cpu',
             gradient_clip_val=params["grad_clip_norm"],
             gradient_clip_algorithm="norm",
             overfit_batches=20 if params["debug"] else 0,
             accumulate_grad_batches=params["accumulate"],
             sync_batchnorm=True,
-            limit_val_batches=params["limit_val_batches"],
         )
         # Train
         trainer.fit(forecaster, datamodule=data_module)
@@ -175,8 +176,9 @@ def param_optimizer(args):
         fn=objective,
         space=search_space,
         algo=tpe.suggest,
-        max_evals=10,  # Adjust the number of evaluations as needed
-        trials=trials
+        max_evals=100,  # Adjust the number of evaluations as needed
+        trials=trials,
+        rstate=rstate,
     )
     print("Best hyperparameters:", best_hyperparams)
     
