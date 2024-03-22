@@ -284,16 +284,11 @@ class Spacetimeformer(nn.Module):
         enc_y,
         dec_x,
         dec_y,
-        x_enc,
-        x_mark_enc,
-        x_dec,
-        x_mark_dec,
         enc_self_mask=None,
         dec_self_mask=None,
         dec_enc_mask=None,
         output_attention=False,
     ):
-        batch_size = x_enc.shape[0]
         # embed context sequence
         enc_vt_emb, enc_s_emb, enc_var_idxs, enc_mask_seq = self.enc_embedding(
             y=enc_y, x=enc_x
