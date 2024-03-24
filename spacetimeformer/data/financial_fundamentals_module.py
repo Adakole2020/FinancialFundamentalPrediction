@@ -24,8 +24,10 @@ class FundamentalsCSVSeries:
             "month"
         ],
         normalize: bool = True,):
+        #CHANGED_FILE
+        # raw_df = pd.read_csv("https://docs.google.com/spreadsheets/d/e/2PACX-1vSdLYZtOd12U14IGzypjzIX1q69OMuhW_AsTaOgdZc7UgqJSvuBIC8V85kZeQHnqiCxaB7Ezsru_ri7/pub?gid=198200420&single=true&output=csv")
+        raw_df = pd.read_csv("/Users/koleebute/Downloads/s_and_p_500_company_fundamentals.csv")
         
-        raw_df = pd.read_csv("https://docs.google.com/spreadsheets/d/e/2PACX-1vSdLYZtOd12U14IGzypjzIX1q69OMuhW_AsTaOgdZc7UgqJSvuBIC8V85kZeQHnqiCxaB7Ezsru_ri7/pub?gid=198200420&single=true&output=csv")
         raw_df = raw_df[raw_df['quarter'].notnull()].reset_index(drop = True)
         raw_df['eps_surprise'] = np.where(raw_df['eps_normalized_consensus_mean'] == 0, raw_df['eps_normalized_actual'], (raw_df["eps_normalized_actual"] - raw_df["eps_normalized_consensus_mean"])/raw_df["eps_normalized_consensus_mean"])
         raw_df.drop(columns = ["eps_normalized_actual"], inplace = True)
@@ -55,7 +57,6 @@ class FundamentalsCSVSeries:
 
         # The same code again calling the columns
         df[float64_cols] = df[float64_cols].astype('float32')
-        df[float64_cols] = df[float64_cols].fillna(value=np.NAN)
             
         df[self.categorical_context_cols] = df[self.categorical_context_cols].apply(lambda x: x.cat.codes)
         
@@ -65,8 +66,11 @@ class FundamentalsCSVSeries:
             self._scaler = self._scaler.fit(
                 df[[x for x in self.context_cols if x not in self.categorical_context_cols]].values
             )
-        df[[x for x in self.context_cols if x not in self.categorical_context_cols]] = self.apply_scaling_df(df[[x for x in self.context_cols if x not in self.categorical_context_cols]])
-
+            
+        df = self.apply_scaling_df(df)
+        
+        df[float64_cols] = df[float64_cols].fillna(value=-1e2)
+        
         grouped_df= df.groupby(group_cols)
         ctxt_x_train, trgt_x_train = np.empty((0, context_length, len(self.time_cols))), np.empty((0, prediction_length, len(self.time_cols)))
         ctxt_y_train, trgt_y_train = np.empty((0, context_length, len(self.context_cols)+len(self.target_cols))), np.empty((0, prediction_length, len(self.target_cols)))
@@ -80,13 +84,15 @@ class FundamentalsCSVSeries:
             if len(mini_df.index) < prediction_length + context_length:
                 continue
 
-            ctxt_y, trgt_y = prepare_forecasting_data(mini_df, fcst_history=context_length, fcst_horizon=prediction_length, x_vars=self.context_cols + self.target_cols, y_vars=self.target_cols)
+            ctxt_y, trgt_y = prepare_forecasting_data(mini_df, fcst_history=context_length, fcst_horizon=prediction_length, x_vars=self.target_cols+[x for x in self.context_cols if x not in self.categorical_context_cols]+self.categorical_context_cols, y_vars=self.target_cols)
             ctxt_x, trgt_x = prepare_forecasting_data(mini_df, fcst_history=context_length, fcst_horizon=prediction_length, x_vars=self.time_cols, y_vars=self.time_cols)
+
 
             ctxt_y, trgt_y = np.einsum('ijk -> ikj', ctxt_y), np.einsum('ijk -> ikj', trgt_y)
             ctxt_x, trgt_x = np.einsum('ijk -> ikj', ctxt_x), np.einsum('ijk -> ikj', trgt_x)
             test_start = math.ceil(test_split*ctxt_x.shape[0]) if test_split < 1 else int(test_split)
             valid_start = math.ceil(val_split*ctxt_x.shape[0]) + test_start if val_split < 1 else int(val_split) + test_start
+            
 
             if test_start != 0:
                 ctxt_y_test = np.concatenate((ctxt_y_test, ctxt_y[-test_start:]), axis=0)
@@ -94,7 +100,7 @@ class FundamentalsCSVSeries:
 
                 ctxt_x_test = np.concatenate((ctxt_x_test, ctxt_x[-test_start:]), axis=0)
                 trgt_x_test = np.concatenate((trgt_x_test, trgt_x[-test_start:]), axis=0)
-            
+                
             if valid_start != 0:
                 ctxt_y_val = np.concatenate((ctxt_y_val, ctxt_y[-valid_start:-test_start]), axis=0) if test_start != 0 else np.concatenate((ctxt_y_val, ctxt_y[-valid_start:]), axis=0)
                 trgt_y_val = np.concatenate((trgt_y_val, trgt_y[-valid_start:-test_start]), axis=0) if test_start != 0 else np.concatenate((trgt_y_val, trgt_y[-valid_start:]), axis=0)
@@ -115,9 +121,9 @@ class FundamentalsCSVSeries:
                 ctxt_x_train = np.concatenate((ctxt_x_train, ctxt_x), axis=0)
                 trgt_x_train = np.concatenate((trgt_x_train, trgt_x), axis=0)
                 
-        self._train_data = (ctxt_x_train, ctxt_y_train, trgt_x_train, trgt_y_train) # (4, n_samples, n_features, n_timesteps)
-        self._val_data = (ctxt_x_val, ctxt_y_val, trgt_x_val, trgt_y_val) # (4, n_samples, n_features, n_timesteps)
-        self._test_data = (ctxt_x_test, ctxt_y_test, trgt_x_test, trgt_y_test) # (4, n_samples, n_features, n_timesteps)
+        self._train_data = (ctxt_x_train, ctxt_y_train, trgt_x_train, trgt_y_train) # (4, n_samples, n_timesteps, n_features)
+        self._val_data = (ctxt_x_val, ctxt_y_val, trgt_x_val, trgt_y_val) # (4, n_samples, n_timesteps, n_features)
+        self._test_data = (ctxt_x_test, ctxt_y_test, trgt_x_test, trgt_y_test) # (4, n_samples, n_timesteps, n_features)
         
         
     
@@ -150,9 +156,7 @@ class FundamentalsCSVSeries:
         scaled = df.copy(deep=True)
         cols = [x for x in self.context_cols if x not in self.categorical_context_cols]
         dtype = df[cols].values.dtype
-        scaled[cols] = (
-            df[cols].values - self._scaler.mean_.astype(dtype)
-        ) / self._scaler.scale_.astype(dtype)
+        scaled[cols] = self._scaler.transform(scaled[cols]).astype(dtype)
         return scaled
 
     def apply_scaling(self, array):
@@ -168,9 +172,7 @@ class FundamentalsCSVSeries:
         scaled = df.copy(deep=True)
         cols = self.context_cols
         dtype = df[cols].values.dtype
-        scaled[cols] = (
-            df[cols].values * self._scaler.scale_.astype(dtype)
-        ) + self._scaler.mean_.astype(dtype)
+        scaled[cols] = self._scaler.inverse_transform(scaled[cols]).astype(dtype)
         return scaled
 
     def reverse_scaling(self, array):
