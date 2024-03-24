@@ -26,6 +26,7 @@ class Forecaster(pl.LightningModule, ABC):
         verbose: int = True,
     ):
         super().__init__()
+        torch.set_flush_denormal(True)
         qprint = lambda _msg_: print(_msg_) if verbose else None
         qprint("Forecaster")
         qprint(f"\tL2: {l2_coeff}")
@@ -86,9 +87,8 @@ class Forecaster(pl.LightningModule, ABC):
         return {}
 
     def loss_fn(
-        self, true: torch.Tensor, preds: torch.Tensor, mask: torch.Tensor
+        self, true: torch.Tensor, preds, mask: torch.Tensor
     ) -> torch.Tensor:
-
         if self.loss == "mse":
             if isinstance(preds, Normal):
                 preds = preds.mean
@@ -104,15 +104,18 @@ class Forecaster(pl.LightningModule, ABC):
             den = abs(preds.detach()) + abs(true) + 1e-5
             return 100.0 * (mask * (num / den)).sum() / max(mask.sum(), 1)
         elif self.loss == "nll":
-            assert isinstance(preds, Normal)
-            return -(mask * preds.log_prob(true)).sum(-1).sum(-1).mean()
+            assert isinstance(preds, Normal), "NLL Loss only works with a Distribution but the code is optimized for normal"
+            log_prob = preds.log_prob(true)
+            print(log_prob)
+            return -(mask * log_prob).sum(-1).sum(-1).mean()
             # return F.nll_loss(mask * true, mask * preds)
         else:
             raise ValueError(f"Unrecognized Loss Function : {self.loss}")
-
+    #CHANGED_FILE
     def forecasting_loss(
-        self, outputs: torch.Tensor, y_t: torch.Tensor, time_mask: int
+        self, outputs, y_t: torch.Tensor, time_mask: int
     ) -> Tuple[torch.Tensor]:
+        y_t = torch.cat(y_t.chunk(y_t.shape[2], dim=-1), dim=1)
         if self.null_value is not None:
             null_mask_mat = y_t != self.null_value
         else:
@@ -138,7 +141,6 @@ class Forecaster(pl.LightningModule, ABC):
     ) -> Tuple[torch.Tensor]:
         x_c, y_c, x_t, y_t = batch
         outputs, *_ = self(x_c, y_c, x_t, y_t, **forward_kwargs)
-
         loss, mask = self.forecasting_loss(
             outputs=outputs, y_t=y_t, time_mask=time_mask
         )
@@ -230,7 +232,7 @@ class Forecaster(pl.LightningModule, ABC):
         pred = pred * mask
         true = torch.nan_to_num(true) * mask
 
-        adj = mask.mean().cpu().numpy() + 1e-5
+        adj = mask.cpu().numpy() + 1e-5
         pred = pred.detach().cpu().numpy()
         true = true.detach().cpu().numpy()
         scaled_pred = self._inv_scaler(pred)

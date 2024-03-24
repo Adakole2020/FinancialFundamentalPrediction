@@ -158,6 +158,7 @@ class Spacetimeformer_Forecaster(stf.Forecaster):
         qprint(f"\t\tShifted Time Windows: {use_shifted_time_windows}")
         qprint(f"\t\tPosition Emb Type: {pos_emb_type}")
         qprint(f"\t\tRecon Loss Imp: {recon_loss_imp}")
+        qprint(f"\t\tDistribution Output: Normal")
         qprint(f" ***                                  *** ")
 
     @property
@@ -174,12 +175,6 @@ class Spacetimeformer_Forecaster(stf.Forecaster):
         )
 
         time_mask = self.time_masked_idx if train else None
-
-        forecast_loss, class_loss, acc, output, mask = self.compute_loss(
-            batch=batch,
-            time_mask=time_mask,
-            forward_kwargs=kwargs,
-        )
         
         # compute all loss values
         loss_dict = self.compute_loss(
@@ -241,7 +236,7 @@ class Spacetimeformer_Forecaster(stf.Forecaster):
             x_c, y_c, x_t, y_t, **forward_kwargs
         )
 
-        #forecast (target seq prediction) loss
+        #forecast (target seq prediction) loss``
         forecast_loss, forecast_mask = self.forecasting_loss(
             outputs=forecast_out, y_t=y_t, time_mask=time_mask
         )
@@ -265,7 +260,7 @@ class Spacetimeformer_Forecaster(stf.Forecaster):
             "acc": acc,
             "forecast_out": forecast_out.mean,
             "forecast_mask": forecast_mask,
-            "recon_out": recon_out,
+            "recon_out": recon_out.mean,
             "recon_loss": recon_loss,
             "recon_mask": recon_mask,
         }
@@ -310,17 +305,16 @@ class Spacetimeformer_Forecaster(stf.Forecaster):
         total = 0
         count = 0
         for dict_ in outs:
-            if "forecast_loss" in dict_:
-                total += dict_["forecast_loss"].mean()
-                count += 1
+            total += dict_["loss"]
+            count += 1
         avg_val_loss = total / count
         # manually tell scheduler it's the end of an epoch to activate
         # ReduceOnPlateau functionality from a step-based scheduler
-        self.scheduler.step(avg_val_loss, is_end_epoch=True)
+        self.scheduler.step(avg_val_loss)
 
     def training_step_end(self, outs):
         self._log_stats("train", outs)
-        self.scheduler.step()
+        self.scheduler.step(outs["loss"].mean())
         return {"loss": outs["loss"].mean()}
 
     def configure_optimizers(self):

@@ -7,7 +7,7 @@ import numpy as np
 import spacetimeformer as stf
 
 from .extra_layers import ConvBlock, Flatten
-from einops import repeat
+from einops import rearrange, repeat
 
 class SpacetimeformerEmbedding(nn.Module):
     def __init__(
@@ -442,7 +442,7 @@ class SpacetimeformerEmbeddingWithCategoricals(SpacetimeformerEmbedding):
         # in the dataset and passed to the null_value arg.
         y = torch.nan_to_num(y)
         x = torch.nan_to_num(x)
-
+        
         if self.is_encoder:
             # optionally mask the context sequence for reconstruction
             y = self.data_drop(y)
@@ -472,7 +472,7 @@ class SpacetimeformerEmbeddingWithCategoricals(SpacetimeformerEmbedding):
             y = torch.zeros_like(y)
             
         # val  + time embedding
-        y = torch.cat(y.chunk(d_y, dim=-1), dim=1) # [bs, length, d_y] -> [bs, length * d_y, 1]
+        y = rearrange(y, "batch len dy -> batch (len dy) 1") # [bs, length, d_y] -> [bs, length * d_y, 1]
 
         # "given" embedding
         if self.GIVEN:
@@ -484,7 +484,7 @@ class SpacetimeformerEmbeddingWithCategoricals(SpacetimeformerEmbedding):
             # if y was NaN, set Given = False
             given *= ~true_null
                 
-            given = torch.cat(given.chunk(d_y, dim=-1), dim=1).squeeze(-1) # [bs, length, d_y] -> [bs, length * d_y]
+            given = rearrange(given, "batch len dy -> batch (len dy)") # [bs, length, d_y] -> [bs, length * d_y]
 
             if self.null_value is not None:
                 # mask null values

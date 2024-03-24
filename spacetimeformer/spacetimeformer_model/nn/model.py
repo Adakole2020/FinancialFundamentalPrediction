@@ -340,7 +340,7 @@ class Spacetimeformer(nn.Module):
         # stabilization trick from Neural Processes papers
         stds = 1e-3 + (1.0 - 1e-3) * torch.log(1.0 + log_stds.exp())
 
-        pred_distrib = pyd.Normal(means, stds)
+        forecast_out = pyd.Normal(means, stds)
 
         if enc_var_idxs is not None:
             # note that detaching the input like this means the transformer layers
