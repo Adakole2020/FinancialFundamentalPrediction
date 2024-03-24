@@ -115,7 +115,6 @@ class Forecaster(pl.LightningModule, ABC):
     def forecasting_loss(
         self, outputs, y_t: torch.Tensor, time_mask: int
     ) -> Tuple[torch.Tensor]:
-        y_t = torch.cat(y_t.chunk(y_t.shape[2], dim=-1), dim=1)
         if self.null_value is not None:
             null_mask_mat = y_t != self.null_value
         else:

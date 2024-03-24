@@ -224,7 +224,7 @@ class SpacetimeformerEmbedding(nn.Module):
             y = torch.zeros_like(y)
 
         # val  + time embedding
-        y = torch.cat(y.chunk(d_y, dim=-1), dim=1) # [bs, length, d_y] -> [bs, length * d_y]
+        y = Flatten(y) # [bs, length, d_y] -> [bs, length * d_y]
         val_time_inp = torch.cat((y, time_emb), dim=-1) # [bs, length * d_y, 1 + time_emb_dim * d_x]
         val_time_emb = self.val_time_emb(val_time_inp) # [bs, length * d_y, d_model]
 
@@ -238,7 +238,7 @@ class SpacetimeformerEmbedding(nn.Module):
             # if y was NaN, set Given = False
             given *= ~true_null
                 
-            given = torch.cat(given.chunk(d_y, dim=-1), dim=1).squeeze(-1) # [bs, length, d_y] -> [bs, length * d_y]
+            given = Flatten(given).squeeze(-1) # [bs, length, d_y] -> [bs, length * d_y]
             if self.null_value is not None:
                 # mask null values
                 null_mask = (y != self.null_value).squeeze(-1)
@@ -399,7 +399,7 @@ class SpacetimeformerEmbeddingWithCategoricals(SpacetimeformerEmbedding):
         if self.is_encoder and self.categorical_dict_sizes:
             k = len(self.categorical_dict_sizes)
             for i, emb in enumerate(self.cat_emb):
-                cat = y[:, :, d_y-k+i].long()
+                cat = y[:, :, d_y-k+i].long().to(y.device) 
                 cat_emb = emb(cat)
                 y = torch.cat((y, cat_emb), dim=-1)
             
@@ -472,7 +472,7 @@ class SpacetimeformerEmbeddingWithCategoricals(SpacetimeformerEmbedding):
             y = torch.zeros_like(y)
             
         # val  + time embedding
-        y = rearrange(y, "batch len dy -> batch (len dy) 1") # [bs, length, d_y] -> [bs, length * d_y, 1]
+        y = Flatten(y) # [bs, length, d_y] -> [bs, length * d_y, 1]
 
         # "given" embedding
         if self.GIVEN:
@@ -484,7 +484,7 @@ class SpacetimeformerEmbeddingWithCategoricals(SpacetimeformerEmbedding):
             # if y was NaN, set Given = False
             given *= ~true_null
                 
-            given = rearrange(given, "batch len dy -> batch (len dy)") # [bs, length, d_y] -> [bs, length * d_y]
+            given = rearrange(given, "batch len dy -> batch (dy len)") # [bs, length, d_y] -> [bs, length * d_y]
 
             if self.null_value is not None:
                 # mask null values
@@ -505,12 +505,11 @@ class SpacetimeformerEmbeddingWithCategoricals(SpacetimeformerEmbedding):
             categorical_dim = len(self.categorical_dict_sizes)
             # For each row in the batch, replace the last categorical_dim elements of the second dimension with the embeddings
             for i in range(bs):
-                for j in range(length*d_y):
-                    if (j % d_y) >= (d_y-categorical_dim):
-                        # Apply PyTorch embedding for this categorical variable
-                        embedding = self.cat_emb[(j % d_y) - d_y + categorical_dim](y[i, j, 0].clone().detach().long())
-                        # Replace the entire third dimension for that row with the embedding
-                        y[i, j] = embedding.unsqueeze(0)
+                for j in range(-length*categorical_dim, 0):
+                    # Apply PyTorch embedding for this categorical variable
+                    embedding = self.cat_emb[j//length + categorical_dim](y[i, j, 0].clone().detach().long().to(y.device))
+                    # Replace the entire third dimension for that row with the embedding
+                    y[i, j] = embedding.unsqueeze(0)
         
         val_time_inp = torch.cat((y, time_emb), dim=-1)
         val_time_emb = self.val_time_emb(val_time_inp) # [bs, length * d_y, d_model]

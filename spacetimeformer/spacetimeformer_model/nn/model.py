@@ -267,7 +267,6 @@ class Spacetimeformer(nn.Module):
         self.classifier = nn.Linear(d_model, d_yc, bias=True)
 
     def _fold_spatio_temporal(self, dec_out):
-        print(dec_out.shape)
         dec_out = dec_out.chunk(self.d_yt, dim=1)
         means = []
         log_stds = []
