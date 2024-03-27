@@ -4,7 +4,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
-import torchmetrics
+from torchmetrics.functional.classification import multiclass_accuracy
 
 import spacetimeformer as stf
 
@@ -210,6 +210,7 @@ class Spacetimeformer_Forecaster(stf.Forecaster):
         for time_idx in range(len(time_based_mae)):
             stats[f"mae_traffic_time_{time_idx}"] = time_based_mae[time_idx]
         """
+        self.outs = stats
         return stats
 
     def classification_loss(
@@ -217,16 +218,17 @@ class Spacetimeformer_Forecaster(stf.Forecaster):
     ) -> Tuple[torch.Tensor]:
 
         labels = labels.view(-1).to(logits.device)
-        d_y = labels.max() + 1
+        d_y = (labels.max() + 1).item()
 
         logits = logits.view(
             -1, d_y
         )
 
         class_loss = F.cross_entropy(logits, labels)
-        acc = torchmetrics.functional.accuracy(
+        acc = multiclass_accuracy(
             torch.softmax(logits, dim=1),
             labels,
+            num_classes=d_y,
         )
         return class_loss, acc
 
@@ -301,16 +303,17 @@ class Spacetimeformer_Forecaster(stf.Forecaster):
             return forecast_output, recon_output, (logits, labels), attn
         return forecast_output, recon_output, (logits, labels)
     
-    def validation_epoch_end(self, outs):
+    def on_validation_epoch_end(self):
         total = 0
         count = 0
-        for dict_ in outs:
+        for dict_ in self.validation_step_outputs:
             total += dict_["loss"]
             count += 1
         avg_val_loss = total / count
         # manually tell scheduler it's the end of an epoch to activate
         # ReduceOnPlateau functionality from a step-based scheduler
         self.scheduler.step(avg_val_loss)
+        self.validation_step_outputs.clear()
 
     def training_step_end(self, outs):
         self._log_stats("train", outs)

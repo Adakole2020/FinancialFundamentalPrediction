@@ -27,6 +27,9 @@ class Forecaster(pl.LightningModule, ABC):
     ):
         super().__init__()
         torch.set_flush_denormal(True)
+        
+        self.validation_step_outputs = [] # https://github.com/Lightning-AI/pytorch-lightning/pull/16520
+        
         qprint = lambda _msg_: print(_msg_) if verbose else None
         qprint("Forecaster")
         qprint(f"\tL2: {l2_coeff}")
@@ -106,7 +109,6 @@ class Forecaster(pl.LightningModule, ABC):
         elif self.loss == "nll":
             assert isinstance(preds, Normal), "NLL Loss only works with a Distribution but the code is optimized for normal"
             log_prob = preds.log_prob(true)
-            print(log_prob)
             return -(mask * log_prob).sum(-1).sum(-1).mean()
             # return F.nll_loss(mask * true, mask * preds)
         else:
@@ -174,7 +176,7 @@ class Forecaster(pl.LightningModule, ABC):
         # handle case that the output is a distribution (spacetimeformer)
         if isinstance(normalized_preds, Normal):
             if sample_preds:
-                normalized_preds = normalized_preds.sample()
+                normalized_preds = normalized_preds.sample(100)
             else:
                 normalized_preds = normalized_preds.mean
 
@@ -265,33 +267,38 @@ class Forecaster(pl.LightningModule, ABC):
         return stats
 
     def training_step(self, batch, batch_idx):
-        return self.step(batch, train=True)
+        stats = self.step(batch, train=True)
+        self._log_stats("train", stats)
+        return stats
 
     def validation_step(self, batch, batch_idx):
         stats = self.step(batch, train=False)
-        self.current_val_stats = stats
+        self.validation_step_outputs.append(stats)
+        self._log_stats("val", stats)
         return stats
 
     def test_step(self, batch, batch_idx):
-        return self.step(batch, train=False)
+        stats = self.step(batch, train=True)
+        self._log_stats("test", stats)
+        return stats
 
     def _log_stats(self, section, outs):
         for key in outs.keys():
             stat = outs[key]
             if isinstance(stat, np.ndarray) or isinstance(stat, torch.Tensor):
                 stat = stat.mean()
-            self.log(f"{section}/{key}", stat, sync_dist=True)
+            if key == "loss":
+                self.log(f"{section}/{key}", stat, sync_dist=True, prog_bar=True)
+            else:
+                self.log(f"{section}/{key}", stat, sync_dist=True)
 
     def training_step_end(self, outs):
-        self._log_stats("train", outs)
         return {"loss": outs["loss"].mean()}
 
     def validation_step_end(self, outs):
-        self._log_stats("val", outs)
         return {"loss": outs["loss"].mean()}
 
     def test_step_end(self, outs):
-        self._log_stats("test", outs)
         return {"loss": outs["loss"].mean()}
 
     def predict_step(self, batch, batch_idx):
