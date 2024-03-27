@@ -23,12 +23,10 @@ def _assert_squeeze(x):
     return x.squeeze(-1)
 
 
-def plot(x_c, y_c, x_t, y_t, idx, title, preds, pad_val=None, conf=None):
-    if y_c.shape[-1] > 1:
-        idx = random.randrange(0, y_c.shape[-1])
-    y_c = y_c[..., idx]
-    y_t = y_t[..., idx]
-    preds = preds[..., idx]
+def plot(x_c, y_c, x_t, y_t, idx, title, preds, x_ticks=[], pad_val=None, conf=None):
+    y_c = y_c[..., 0]
+    y_t = _assert_squeeze(y_t)
+    preds = _assert_squeeze(preds)
     
     if pad_val is not None:
         y_c = y_c[y_c != pad_val]
@@ -41,25 +39,44 @@ def plot(x_c, y_c, x_t, y_t, idx, title, preds, pad_val=None, conf=None):
     xaxis_t = np.arange(len(y_c), len(y_c) + len(y_t))
     context = pd.DataFrame({"xaxis_c": xaxis_c, "y_c": y_c})
     target = pd.DataFrame({"xaxis_t": xaxis_t, "y_t": y_t, "pred": preds})
-    sns.lineplot(data=context, x="xaxis_c", y="y_c", label="Context", linewidth=5.8)
+    sns.lineplot(data=context, x="xaxis_c", y="y_c", label="Context", linewidth=2)
     ax.scatter(
         x=target["xaxis_t"], y=target["y_t"], c="grey", label="True", linewidth=1.0
     )
-    sns.lineplot(data=target, x="xaxis_t", y="pred", label="Forecast", linewidth=5.9)
+    sns.lineplot(data=target, x="xaxis_t", y="pred", label="Forecast", linewidth=2, alpha=0.7)
     if conf is not None:
         conf = conf[..., idx]
         ax.fill_between(
-            xaxis_t, (preds - conf), (preds + conf), color="orange", alpha=0.1
+            xaxis_t, (preds - 1.96*conf), (preds + 1.96*conf), color="orange", alpha=0.1, label = "95% CI"
         )
-    ax.legend(loc="upper left", prop={"size": 12})
+    ax.legend(loc="upper left", prop={"size": 10})
     # ax.set_facecolor("#f0f0f0")
-    ax.set_xticks([])
+    ax.set_xticks(x_ticks)
     ax.set_xlabel("")
     ax.set_ylabel("")
     ax.set_title(title)
 
     #plt.title(f"MAPE = {mape(y_t, preds):.3f}")
 
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=128)
+    buf.seek(0)
+    img_arr = np.frombuffer(buf.getvalue(), dtype=np.uint8)
+    buf.close()
+    plt.close(fig)
+    img = cv2.imdecode(img_arr, 1)
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    return img
+
+def show_image(data, title, x_tick_spacing=None, y_tick_spacing=None, cmap="Blues"):
+    fig, ax = plt.subplots(figsize=(10, 10))
+
+    plt.imshow(data, cmap=cmap)
+    if tick_spacing:
+        plt.xticks(np.arange(0, data.shape[-1] + 1, x_tick_spacing))
+        plt.yticks(np.arange(0, data.shape[0] + 1, y_tick_spacing))
+
+    plt.title(title)
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=128)
     buf.seek(0)
@@ -78,6 +95,7 @@ class PredictionPlotterCallback(pl.Callback):
         var_names=None,
         pad_val=None,
         total_samples=4,
+        identifiers=None,
         log_to_wandb=True,
     ):
         self.test_data = test_batches
@@ -92,10 +110,12 @@ class PredictionPlotterCallback(pl.Callback):
         
         self.var_idxs = var_idxs
         self.var_names = var_names
+        self.identifiers = identifiers
         self.imgs = None
 
-    def on_validation_end(self, trainer, model):
+    def on_train_epoch_end(self, trainer, model):
         idxs = [random.sample(range(self.test_data[0].shape[0]), k=self.total_samples)]
+        identifiers = self.identifiers[idxs] if self.identifiers else None
         x_c, y_c, x_t, y_t = [i[idxs].detach().to(model.device) for i in self.test_data]
         with torch.no_grad():
             preds, *_ = model(x_c, y_c, x_t, y_t, **model.eval_step_forward_kwargs)
@@ -114,10 +134,11 @@ class PredictionPlotterCallback(pl.Callback):
                     x_t[i].cpu().numpy(),
                     y_t[i].cpu().numpy(),
                     idx=var_idx,
-                    title=var_name,
+                    title=f"{var_name}{'['+identifiers[i]+']' if identifiers else ''}",
                     preds=preds[i].cpu().numpy(),
+                    x_ticks=np.char.add(np.char.add(x_c[i,:,0].astype("str"), "Q"), (x_c[i,:,1] // 3).astype("str"))+np.char.add(np.char.add(x_t[i,:,0].astype("str"), "Q"), (x_t[i,:,1] // 3).astype("str")),
                     pad_val=self.pad_val,
-                    conf=preds_std[i] if model.loss == "nll" else None,
+                    conf=preds_std[i],
                 )
                 if img is not None:
                     if self.log_to_wandb:
@@ -133,25 +154,6 @@ class PredictionPlotterCallback(pl.Callback):
             )
         else:
             self.imgs = imgs
-
-
-def attn_plot(attn, title, tick_spacing=None):
-    fig, ax = plt.subplots(figsize=(5, 5))
-    plt.imshow(attn.cpu().numpy(), cmap="Blues")
-    if tick_spacing:
-        plt.xticks(np.arange(0, attn.shape[0] + 1, tick_spacing))
-        plt.yticks(np.arange(0, attn.shape[0] + 1, tick_spacing))
-
-    plt.title(title)
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=128)
-    buf.seek(0)
-    img_arr = np.frombuffer(buf.getvalue(), dtype=np.uint8)
-    buf.close()
-    plt.close(fig)
-    img = cv2.imdecode(img_arr, 1)
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    return img
 
 
 class AttentionMatrixCallback(pl.Callback):
@@ -171,6 +173,7 @@ class AttentionMatrixCallback(pl.Callback):
             y_ci = y_c[i].unsqueeze(0)
             x_ti = x_t[i].unsqueeze(0)
             y_ti = y_t[i].unsqueeze(0)
+            
             with torch.no_grad():
                 *_, (enc_self_attn, dec_cross_attn) = model(
                     x_ci, y_ci, x_ti, y_ti, output_attn=True
@@ -209,17 +212,30 @@ class AttentionMatrixCallback(pl.Callback):
                 a_head = attns[head]
 
             a_head /= torch.max(a_head, dim=-1)[0].unsqueeze(1)
-
-            imgs.append(
-                wandb.Image(
-                    show_image(
-                        a_head.cpu().numpy(),
-                        f"{img_title_prefix} Head {str(head)}",
-                        tick_spacing=a_head.shape[-2],
-                        cmap="Blues",
+            if img_title_prefix.startswith("Self"):
+                imgs.append(
+                    wandb.Image(
+                        show_image(
+                            a_head.cpu().numpy(),
+                            f"{img_title_prefix} Head {str(head)}",
+                            x_tick_spacing=self.test_data[0].shape[-2],
+                            y_tick_spacing=self.test_data[0].shape[-2],
+                            cmap="Blues",
+                        )
                     )
                 )
-            )
+            else:
+                imgs.append(
+                    wandb.Image(
+                        show_image(
+                            a_head.cpu().numpy(),
+                            f"{img_title_prefix} Head {str(head)}",
+                            x_tick_spacing=self.test_data[-1].shape[-2],
+                            y_tick_spacing=self.test_data[0].shape[-2],
+                            cmap="Blues",
+                        )
+                    )
+                )
         return imgs
     
     
@@ -239,7 +255,7 @@ class AttentionMatrixCallback(pl.Callback):
         return scores
 
     
-    def on_validation_end(self, trainer, model):
+    def on_train_epoch_end(self, trainer, model):
         self_attns, cross_attns = self._get_attns(model)
 
         if self_attns is not None:

@@ -78,6 +78,8 @@ class FundamentalsCSVSeries:
         ctxt_y_val, trgt_y_val = np.empty((0, context_length, len(self.context_cols)+len(self.target_cols))), np.empty((0, prediction_length, len(self.target_cols)))
         ctxt_x_test, trgt_x_test = np.empty((0, context_length, len(self.time_cols))), np.empty((0, prediction_length, len(self.time_cols)))
         ctxt_y_test, trgt_y_test = np.empty((0, context_length, len(self.context_cols)+len(self.target_cols))), np.empty((0, prediction_length, len(self.target_cols)))
+        
+        test_group_identifiers = []
 
         for group in grouped_df.groups.keys():
             mini_df = self._arrange_cols(grouped_df.get_group(group).reset_index(drop=True))
@@ -101,6 +103,8 @@ class FundamentalsCSVSeries:
                 ctxt_x_test = np.concatenate((ctxt_x_test, ctxt_x[-test_start:]), axis=0)
                 trgt_x_test = np.concatenate((trgt_x_test, trgt_x[-test_start:]), axis=0)
                 
+                test_group_identifiers.extend([group]*test_start)
+                
             if valid_start != 0:
                 ctxt_y_val = np.concatenate((ctxt_y_val, ctxt_y[-valid_start:-test_start]), axis=0) if test_start != 0 else np.concatenate((ctxt_y_val, ctxt_y[-valid_start:]), axis=0)
                 trgt_y_val = np.concatenate((trgt_y_val, trgt_y[-valid_start:-test_start]), axis=0) if test_start != 0 else np.concatenate((trgt_y_val, trgt_y[-valid_start:]), axis=0)
@@ -108,12 +112,12 @@ class FundamentalsCSVSeries:
                 ctxt_x_val = np.concatenate((ctxt_x_val, ctxt_x[-valid_start:-test_start]), axis=0) if test_start != 0 else np.concatenate((ctxt_x_val, ctxt_x[-valid_start:]), axis=0)
                 trgt_x_val = np.concatenate((trgt_x_val, trgt_x[-valid_start:-test_start]), axis=0) if test_start != 0 else np.concatenate((trgt_x_val, trgt_x[-valid_start:]), axis=0)
 
-
                 ctxt_y_train = np.concatenate((ctxt_y_train, ctxt_y[:-valid_start]), axis=0)
                 trgt_y_train = np.concatenate((trgt_y_train, trgt_y[:-valid_start]), axis=0)
 
                 ctxt_x_train = np.concatenate((ctxt_x_train, ctxt_x[:-valid_start]), axis=0)
                 trgt_x_train = np.concatenate((trgt_x_train, trgt_x[:-valid_start]), axis=0)
+                
             else:
                 ctxt_y_train = np.concatenate((ctxt_y_train, ctxt_y), axis=0)
                 trgt_y_train = np.concatenate((trgt_y_train, trgt_y), axis=0)
@@ -121,9 +125,11 @@ class FundamentalsCSVSeries:
                 ctxt_x_train = np.concatenate((ctxt_x_train, ctxt_x), axis=0)
                 trgt_x_train = np.concatenate((trgt_x_train, trgt_x), axis=0)
                 
+                
         self._train_data = (ctxt_x_train, ctxt_y_train, trgt_x_train, trgt_y_train) # (4, n_samples, n_timesteps, n_features)
         self._val_data = (ctxt_x_val, ctxt_y_val, trgt_x_val, trgt_y_val) # (4, n_samples, n_timesteps, n_features)
         self._test_data = (ctxt_x_test, ctxt_y_test, trgt_x_test, trgt_y_test) # (4, n_samples, n_timesteps, n_features)
+        self.test_group_identifiers = np.array(test_group_identifiers)
         
         
     
