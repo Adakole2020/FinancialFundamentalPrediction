@@ -1,6 +1,9 @@
 # cache for test output
 .cache
 
+# environment file
+.env
+
 # compiled python files
 __pycache__/
 
@@ -44,6 +47,12 @@ runs/
 
 # checkpoints
 checkpoints/
+
+# lightning logs
+lightning_logs/
+
+# profiling
+profiling/
 
 # vim
 *.swp

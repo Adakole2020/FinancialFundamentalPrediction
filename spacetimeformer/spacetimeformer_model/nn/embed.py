@@ -503,13 +503,38 @@ class SpacetimeformerEmbeddingWithCategoricals(SpacetimeformerEmbedding):
             y = torch.cat((y, zeros), dim=-1)
             
             categorical_dim = len(self.categorical_dict_sizes)
-            # For each row in the batch, replace the last categorical_dim elements of the second dimension with the embeddings
-            for i in range(bs):
-                for j in range(-length*categorical_dim, 0):
-                    # Apply PyTorch embedding for this categorical variable
-                    embedding = self.cat_emb[j//length + categorical_dim](y[i, j, 0].clone().detach().long().to(y.device))
-                    # Replace the entire third dimension for that row with the embedding
-                    y[i, j] = embedding.unsqueeze(0)
+            
+            # # For each row in the batch, replace the last categorical_dim elements of the second dimension with the embeddings
+            # for j in range(-categorical_dim, 0):
+            #     # Apply PyTorch embedding for this categorical variable
+            #     embedding = self.cat_emb[j+categorical_dim](y[:, j*length, 0].clone().detach().long().to(y.device))
+                
+            #     # Replace the entire third dimension for that row with the embedding
+            #     if (j!=-1):
+            #         y[:, j*length:(j+1)*length, :] = embedding.unsqueeze(1).repeat(1, length, 1)
+            #     else:
+            #         y[:, -length:, :] = embedding.unsqueeze(1).repeat(1, length, 1)
+                    
+            new_shape = y.shape[1]
+            # Generate a tensor of indices for each batch item and each position that will be replaced
+            # This tensor will be used to gather the correct embeddings for each position
+            pos_indices = torch.arange(-length*categorical_dim, 0).repeat(bs)
+            
+            # Since we have multiple embedding layers, iterate over them
+            for i, emb_layer in enumerate(self.cat_emb):
+                # Calculate the position indices for this specific embedding layer
+                specific_pos_indices = pos_indices // length + categorical_dim
+                
+                # Mask to select the correct indices for the current embedding layer
+                emb_mask = (specific_pos_indices % categorical_dim == i)
+                selected_pos_indices = pos_indices[emb_mask]
+
+                # For each selected position, fetch the embedding
+                embeddings = emb_layer(y[:, selected_pos_indices, 0].clone().detach().long().to(y.device))
+                
+                # Since we're updating y in-place, ensure correct reshaping and assignment
+                # This step may need to be adjusted based on your exact requirements for embedding assignment
+                y[:, selected_pos_indices] = embeddings
         
         val_time_inp = torch.cat((y, time_emb), dim=-1)
         val_time_emb = self.val_time_emb(val_time_inp) # [bs, length * d_y, d_model]
