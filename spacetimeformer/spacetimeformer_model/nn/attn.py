@@ -362,7 +362,7 @@ class AttentionLayer(nn.Module):
             # never explicitly compute them (e.g. Performer). It is inspired
             # by a comment in the Performer appendix.
             onehot_values = (
-                torch.eye(L).unsqueeze(0).repeat(B, 1, 1).unsqueeze(2).to(values.device)
+                torch.eye(S).unsqueeze(0).repeat(B, 1, 1).unsqueeze(2).to(values.device)
             )
             with torch.no_grad():
                 attn, _ = self.inner_attention(
