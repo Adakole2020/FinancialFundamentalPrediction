@@ -21,6 +21,7 @@ from .attn import (
 )
 from .embed import SpacetimeformerEmbeddingWithCategoricals
 from .data_dropout import ReconstructionDropout
+import gc
 
 
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -259,15 +260,15 @@ class Spacetimeformer(nn.Module):
         qprint(f"Reconstruction Dropout: {self.enc_embedding.data_drop}")
 
         out_dim = 2 if self.embed_method == "spatio-temporal" else 2 * d_yt
-        recon_dim = 1 if self.embed_method == "spatio-temporal" else d_yc
+        recon_dim = 2 if self.embed_method == "spatio-temporal" else 2 * d_yc
         
         # final linear layers turn Transformer output into predictions
         self.forecaster = nn.Linear(d_model, out_dim, bias=True)
         self.reconstructor = nn.Linear(d_model, recon_dim, bias=True)
         self.classifier = nn.Linear(d_model, d_yc, bias=True)
 
-    def _fold_spatio_temporal(self, dec_out):
-        dec_out = dec_out.chunk(self.d_yt, dim=1)
+    def _fold_spatio_temporal(self, dec_out, d_y=None):
+        dec_out = dec_out.chunk(d_y, dim=1)
         means = []
         log_stds = []
         for y in dec_out:
@@ -289,6 +290,7 @@ class Spacetimeformer(nn.Module):
         dec_enc_mask=None,
         output_attention=False,
     ):
+        gc.collect()
         # embed context sequence
         enc_vt_emb, enc_s_emb, enc_var_idxs, enc_mask_seq = self.enc_embedding(
             y=enc_y, x=enc_x
@@ -330,16 +332,18 @@ class Spacetimeformer(nn.Module):
         forecast_out = forecast_out[:, self.start_token_len :, :]
         
         if self.embed_method == "spatio-temporal":
-            means, log_stds = self._fold_spatio_temporal(forecast_out)
-            recon_out = FoldForPred(recon_out, dy=self.d_yc)
+            forecast_means, forecast_log_stds = self._fold_spatio_temporal(forecast_out, self.d_yt)
+            recon_means, recon_log_stds = self._fold_spatio_temporal(recon_out, self.d_yc)
         else:
-            forecast_out = forecast_out[:, self.start_token_len :, :]
-            means, log_stds = forecast_out.chunk(2, dim=-1)
+            forecast_means, forecast_log_stds = forecast_out.chunk(2, dim=-1)
+            recon_means, recon_log_stds = forecast_out.chunk(2, dim=-1)
 
         # stabilization trick from Neural Processes papers
-        stds = 1e-3 + (1.0 - 1e-3) * torch.log(1.0 + log_stds.exp())
+        forecast_log_stds = 1e-3 + (1.0 - 1e-3) * torch.log(1.0 + forecast_log_stds.exp())
+        recon_log_stds = 1e-3 + (1.0 - 1e-3) * torch.log(1.0 + recon_log_stds.exp())
 
-        forecast_out = pyd.Normal(means, stds)
+        forecast_out = pyd.Normal(forecast_means, forecast_log_stds)
+        recon_out = pyd.Normal(recon_means, recon_log_stds)
 
         if enc_var_idxs is not None:
             # note that detaching the input like this means the transformer layers
