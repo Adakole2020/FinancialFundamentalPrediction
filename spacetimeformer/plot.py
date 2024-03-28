@@ -23,7 +23,7 @@ def _assert_squeeze(x):
     return x.squeeze(-1)
 
 
-def plot(x_c, y_c, x_t, y_t, idx, title, preds, x_ticks=[], pad_val=None, conf=None):
+def plot(x_c, y_c, x_t, y_t, idx, title, preds, pad_val=None, conf=None):
     y_c = y_c[..., 0]
     y_t = _assert_squeeze(y_t)
     preds = _assert_squeeze(preds)
@@ -34,7 +34,7 @@ def plot(x_c, y_c, x_t, y_t, idx, title, preds, x_ticks=[], pad_val=None, conf=N
         y_t = y_t[yt_mask]
         preds = preds[yt_mask]
 
-    fig, ax = plt.subplots(figsize=(7, 4))
+    fig, ax = plt.subplots(figsize=(10, 6))
     xaxis_c = np.arange(len(y_c))
     xaxis_t = np.arange(len(y_c), len(y_c) + len(y_t))
     context = pd.DataFrame({"xaxis_c": xaxis_c, "y_c": y_c})
@@ -50,13 +50,10 @@ def plot(x_c, y_c, x_t, y_t, idx, title, preds, x_ticks=[], pad_val=None, conf=N
             xaxis_t, (preds - 1.96*conf), (preds + 1.96*conf), color="orange", alpha=0.1, label = "95% CI"
         )
     ax.legend(loc="upper left", prop={"size": 10})
-    # ax.set_facecolor("#f0f0f0")
-    ax.set_xticks(x_ticks)
+    ax.set_xticks(range(0, len(y_c) + len(y_t), 4))
     ax.set_xlabel("")
     ax.set_ylabel("")
     ax.set_title(title)
-
-    #plt.title(f"MAPE = {mape(y_t, preds):.3f}")
 
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=128)
@@ -69,16 +66,18 @@ def plot(x_c, y_c, x_t, y_t, idx, title, preds, x_ticks=[], pad_val=None, conf=N
     return img
 
 def show_image(data, title, x_tick_spacing=None, y_tick_spacing=None, cmap="Blues"):
-    fig, ax = plt.subplots(figsize=(10, 10))
+    fig, ax = plt.subplots(figsize=(8, 8))
 
     plt.imshow(data, cmap=cmap)
-    if tick_spacing:
-        plt.xticks(np.arange(0, data.shape[-1] + 1, x_tick_spacing))
-        plt.yticks(np.arange(0, data.shape[0] + 1, y_tick_spacing))
+    if x_tick_spacing:
+        plt.xticks(np.arange(0, data.shape[-1] + 1, x_tick_spacing), [])
+        
+    if y_tick_spacing:
+        plt.yticks(np.arange(0, data.shape[0] + 1, y_tick_spacing), [])
 
     plt.title(title)
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=128)
+    fig.savefig(buf, format="png", dpi=256)
     buf.seek(0)
     img_arr = np.frombuffer(buf.getvalue(), dtype=np.uint8)
     buf.close()
@@ -115,7 +114,6 @@ class PredictionPlotterCallback(pl.Callback):
 
     def on_train_epoch_end(self, trainer, model):
         idxs = [random.sample(range(self.test_data[0].shape[0]), k=self.total_samples)]
-        identifiers = self.identifiers[idxs] if self.identifiers else None
         x_c, y_c, x_t, y_t = [i[idxs].detach().to(model.device) for i in self.test_data]
         with torch.no_grad():
             preds, *_ = model(x_c, y_c, x_t, y_t, **model.eval_step_forward_kwargs)
@@ -127,6 +125,10 @@ class PredictionPlotterCallback(pl.Callback):
 
         imgs = []
         for i in range(preds.shape[0]):
+            if self.identifiers is not None:
+                identifier = " [" + self.identifiers[idxs[0][i]] + "]"
+            else:
+                identifier = ""
             for var_idx, var_name in zip(self.var_idxs, self.var_names):
                 img = plot(
                     x_c[i].cpu().numpy(),
@@ -134,9 +136,8 @@ class PredictionPlotterCallback(pl.Callback):
                     x_t[i].cpu().numpy(),
                     y_t[i].cpu().numpy(),
                     idx=var_idx,
-                    title=f"{var_name}{'['+identifiers[i]+']' if identifiers else ''}",
+                    title=f"{var_name}{identifier}",
                     preds=preds[i].cpu().numpy(),
-                    x_ticks=np.char.add(np.char.add(x_c[i,:,0].astype("str"), "Q"), (x_c[i,:,1] // 3).astype("str"))+np.char.add(np.char.add(x_t[i,:,0].astype("str"), "Q"), (x_t[i,:,1] // 3).astype("str")),
                     pad_val=self.pad_val,
                     conf=preds_std[i],
                 )
@@ -288,7 +289,8 @@ class AttentionMatrixCallback(pl.Callback):
                 show_image(
                     enc_emb_sim,
                     f"Encoder Position Emb. Similarity",
-                    tick_spacing=enc_emb_sim.shape[-1],
+                    x_tick_spacing=enc_emb_sim.shape[-1],
+                    y_tick_spacing=enc_emb_sim.shape[-1],
                     cmap="Greens",
                 )
             ),
@@ -296,7 +298,8 @@ class AttentionMatrixCallback(pl.Callback):
                 show_image(
                     dec_emb_sim,
                     f"Decoder Position Emb. Similarity",
-                    tick_spacing=dec_emb_sim.shape[-1],
+                    x_tick_spacing=dec_emb_sim.shape[-1],
+                    y_tick_spacing=dec_emb_sim.shape[-1],
                     cmap="Greens",
                 )
             ),
