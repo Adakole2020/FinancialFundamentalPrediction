@@ -25,8 +25,7 @@ class FundamentalsCSVSeries:
         ],
         normalize: bool = True,):
         #CHANGED_FILE
-        # raw_df = pd.read_csv("https://docs.google.com/spreadsheets/d/e/2PACX-1vSdLYZtOd12U14IGzypjzIX1q69OMuhW_AsTaOgdZc7UgqJSvuBIC8V85kZeQHnqiCxaB7Ezsru_ri7/pub?gid=198200420&single=true&output=csv")
-        raw_df = pd.read_csv("/Users/koleebute/Downloads/s_and_p_500_company_fundamentals.csv")
+        raw_df = pd.read_csv("https://docs.google.com/spreadsheets/d/e/2PACX-1vSdLYZtOd12U14IGzypjzIX1q69OMuhW_AsTaOgdZc7UgqJSvuBIC8V85kZeQHnqiCxaB7Ezsru_ri7/pub?gid=198200420&single=true&output=csv")
         
         raw_df = raw_df[raw_df['quarter'].notnull()].reset_index(drop = True)
         raw_df['eps_surprise'] = np.where(raw_df['eps_normalized_consensus_mean'] == 0, raw_df['eps_normalized_actual'], (raw_df["eps_normalized_actual"] - raw_df["eps_normalized_consensus_mean"])/raw_df["eps_normalized_consensus_mean"])
