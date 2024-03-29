@@ -330,7 +330,7 @@ class SpacetimeformerEmbeddingWithCategoricals(SpacetimeformerEmbedding):
         
         if self.method == "temporal":
             if self.is_encoder:
-                y_emb_inp_dim = d_y - (categorical_embedding_dim - 1) * len(categorical_dict_sizes)
+                y_emb_inp_dim = d_y + (categorical_embedding_dim - 1) * len(categorical_dict_sizes)
             else:
                 y_emb_inp_dim = d_y
         else:
@@ -403,7 +403,7 @@ class SpacetimeformerEmbeddingWithCategoricals(SpacetimeformerEmbedding):
                 cat_emb = emb(cat)
                 y = torch.cat((y, cat_emb), dim=-1)
             
-            y = np.concatenate((y[:, :, :d_y-k], y[:, :, d_y:]), axis=2) # [bs, length, d_y] -> [bs, length, d_y - k + (categorical_embedding_dim - 1) * k]
+            y = torch.cat((y[:, :, :d_y - k], y[:, :, d_y:]), dim=2) # [bs, length, d_y] -> [bs, length, d_y - k + (categorical_embedding_dim - 1) * k]
         val_time_inp = torch.cat((y, time_emb), dim=-1) # [bs, length, d_y + time_emb_dim * d_x]
         val_time_emb = self.val_time_emb(val_time_inp) # [bs, length, d_model]
 
