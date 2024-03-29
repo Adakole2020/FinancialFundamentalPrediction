@@ -69,6 +69,7 @@ class Spacetimeformer_Forecaster(stf.Forecaster):
         recon_mask_drop_seq: float = 0.1,
         recon_mask_drop_standard: float = 0.2,
         recon_mask_drop_full: float = 0.05,
+        distribution_output: str = "skewnormal",
         verbose=True,
     ):
         super().__init__(d_x=d_x,
@@ -127,6 +128,7 @@ class Spacetimeformer_Forecaster(stf.Forecaster):
             recon_mask_drop_seq=recon_mask_drop_seq,
             recon_mask_drop_standard=recon_mask_drop_standard,
             recon_mask_drop_full=recon_mask_drop_full,
+            distribution_output=distribution_output,
         )
         self.start_token_len = start_token_len
         self.init_lr = init_lr
@@ -158,7 +160,7 @@ class Spacetimeformer_Forecaster(stf.Forecaster):
         qprint(f"\t\tShifted Time Windows: {use_shifted_time_windows}")
         qprint(f"\t\tPosition Emb Type: {pos_emb_type}")
         qprint(f"\t\tRecon Loss Imp: {recon_loss_imp}")
-        qprint(f"\t\tDistribution Output: Normal")
+        qprint(f"\t\tDistribution Output: {distribution_output}")
         qprint(f" ***                                  *** ")
 
     @property
@@ -594,4 +596,11 @@ class Spacetimeformer_Forecaster(stf.Forecaster):
             type=float,
             default=0.05,
             help="Pct of timesteps in the context sequence that will be completely masked during reconstruction (vs. `recon_mask_drop_standard` which can mask some but not all vars at a given timestep)",
+        )
+        parser.add_argument(
+            "--distribution_output",
+            type=str,
+            default="skewnormal",
+            choices=["normal", "skewnormal"],
+            help="Output distribution for forecasting. Skewnormal is a skew-normal distribution.",
         )
