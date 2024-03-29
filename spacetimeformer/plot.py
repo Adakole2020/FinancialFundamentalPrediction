@@ -7,7 +7,6 @@ import pytorch_lightning as pl
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-import torch.distributions as pyd
 import pandas as pd
 import cv2
 import random
@@ -16,6 +15,7 @@ import wandb
 from einops import rearrange
 
 from spacetimeformer.eval_stats import mape
+from spacetimeformer.distribution import SkewNormal
 
 
 def _assert_squeeze(x):
@@ -45,9 +45,8 @@ def plot(x_c, y_c, x_t, y_t, idx, title, preds, pad_val=None, conf=None):
     )
     sns.lineplot(data=target, x="xaxis_t", y="pred", label="Forecast", linewidth=2, alpha=0.7)
     if conf is not None:
-        conf = conf[..., idx]
         ax.fill_between(
-            xaxis_t, (preds - 1.96*conf), (preds + 1.96*conf), color="orange", alpha=0.1, label = "95% CI"
+            xaxis_t, (conf[0][..., idx]), (conf[1][..., idx]), color="orange", alpha=0.1, label = "95% CI"
         )
     ax.legend(loc="upper left", prop={"size": 10})
     ax.set_xticks(range(0, len(y_c) + len(y_t), 4))
@@ -65,8 +64,8 @@ def plot(x_c, y_c, x_t, y_t, idx, title, preds, pad_val=None, conf=None):
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     return img
 
-def show_image(data, title, x_tick_spacing=None, y_tick_spacing=None, cmap="Blues"):
-    fig, ax = plt.subplots(figsize=(8, 8))
+def show_image(data, title, figsize=(7,7), x_tick_spacing=None, y_tick_spacing=None, cmap="Blues"):
+    fig, ax = plt.subplots(figsize=figsize)
 
     plt.imshow(data, cmap=cmap)
     if x_tick_spacing:
@@ -75,9 +74,10 @@ def show_image(data, title, x_tick_spacing=None, y_tick_spacing=None, cmap="Blue
     if y_tick_spacing:
         plt.yticks(np.arange(0, data.shape[0] + 1, y_tick_spacing), [])
 
-    plt.title(title)
+    plt.title(title, fontsize=8)
+    plt.tight_layout()
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=256)
+    fig.savefig(buf, format="png", dpi=256, bbox_inches="tight")
     buf.seek(0)
     img_arr = np.frombuffer(buf.getvalue(), dtype=np.uint8)
     buf.close()
@@ -117,12 +117,14 @@ class PredictionPlotterCallback(pl.Callback):
         x_c, y_c, x_t, y_t = [i[idxs].detach().to(model.device) for i in self.test_data]
         with torch.no_grad():
             preds, *_ = model(x_c, y_c, x_t, y_t, **model.eval_step_forward_kwargs)
-            if isinstance(preds, pyd.Normal):
-                preds_std = preds.scale.squeeze(-1).cpu().numpy()
+            if isinstance(preds, SkewNormal):
+                samples = preds.sample((200,)).permute(1, 2, 0, 3)
+                L_CI = torch.quantile(samples, 0.025, dim=-2)
+                R_CI = torch.quantile(samples, 0.975, dim=-2)
                 preds = preds.mean
+                conf = [L_CI, R_CI]
             else:
-                preds_std = [None for _ in range(preds.shape[0])]
-
+                conf = None
         imgs = []
         for i in range(preds.shape[0]):
             if self.identifiers is not None:
@@ -139,7 +141,7 @@ class PredictionPlotterCallback(pl.Callback):
                     title=f"{var_name}{identifier}",
                     preds=preds[i].cpu().numpy(),
                     pad_val=self.pad_val,
-                    conf=preds_std[i],
+                    conf=[conf[0][i], conf[1][i]] if conf is not None else None,
                 )
                 if img is not None:
                     if self.log_to_wandb:
@@ -219,6 +221,7 @@ class AttentionMatrixCallback(pl.Callback):
                         show_image(
                             a_head.cpu().numpy(),
                             f"{img_title_prefix} Head {str(head)}",
+                            figsize=(4, 4),
                             x_tick_spacing=self.test_data[0].shape[-2],
                             y_tick_spacing=self.test_data[0].shape[-2],
                             cmap="Blues",
@@ -231,6 +234,7 @@ class AttentionMatrixCallback(pl.Callback):
                         show_image(
                             a_head.cpu().numpy(),
                             f"{img_title_prefix} Head {str(head)}",
+                            figsize=(6,6),
                             x_tick_spacing=self.test_data[-1].shape[-2],
                             y_tick_spacing=self.test_data[0].shape[-2],
                             cmap="Blues",
@@ -289,6 +293,7 @@ class AttentionMatrixCallback(pl.Callback):
                 show_image(
                     enc_emb_sim,
                     f"Encoder Position Emb. Similarity",
+                    figsize=(4, 4),
                     x_tick_spacing=enc_emb_sim.shape[-1],
                     y_tick_spacing=enc_emb_sim.shape[-1],
                     cmap="Greens",
@@ -298,6 +303,7 @@ class AttentionMatrixCallback(pl.Callback):
                 show_image(
                     dec_emb_sim,
                     f"Decoder Position Emb. Similarity",
+                    figsize=(4, 4),
                     x_tick_spacing=dec_emb_sim.shape[-1],
                     y_tick_spacing=dec_emb_sim.shape[-1],
                     cmap="Greens",

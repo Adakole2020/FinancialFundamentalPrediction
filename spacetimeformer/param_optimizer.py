@@ -103,9 +103,9 @@ def trainer(args):
     pos_emb_type="t2v",
     use_final_norm=True,
     global_self_attn="performer",
-    local_self_attn="performer",
+    local_self_attn="performer" if args.embed_method == "spatio-temporal" else "none",
     global_cross_attn="performer",
-    local_cross_attn="performer",
+    local_cross_attn="performer" if args.embed_method == "spatio-temporal" else "none",
     performer_kernel="softmax",
     performer_redraw_interval=150,
     attn_time_windows=1,
@@ -113,7 +113,7 @@ def trainer(args):
     norm="batch",
     activation="gelu",
     init_lr=1e-8,
-    base_lr=5e-4,
+    base_lr=2e-4,
     warmup_steps=20,
     decay_factor=0.9, # https://stackoverflow.com/questions/67746083/setting-a-minimum-learning-rate-on-reduce-on-plateau
     initial_downsample_convs=args.initial_downsample_convs,
@@ -135,7 +135,8 @@ def trainer(args):
     recon_mask_max_seq_len=args.recon_mask_max_seq_len,
     recon_mask_drop_seq=args.recon_mask_drop_seq,
     recon_mask_drop_standard=args.recon_mask_drop_standard,
-    recon_mask_drop_full=args.recon_mask_drop_full,)
+    recon_mask_drop_full=args.recon_mask_drop_full,
+    distribution_output="skewnormal",)
     data_module = FundamentalsDataModule(
         dataset_kwargs={
             "context_length": args.context_points,
@@ -180,7 +181,7 @@ def trainer(args):
     
     
     trainer = pl.Trainer(
-        max_epochs=20,
+        max_epochs=12,
         logger=logger,
         callbacks=callbacks,
         gradient_clip_val=0.5,
@@ -252,7 +253,8 @@ def test_model(args):
     recon_mask_max_seq_len=args.recon_mask_max_seq_len,
     recon_mask_drop_seq=args.recon_mask_drop_seq,
     recon_mask_drop_standard=args.recon_mask_drop_standard,
-    recon_mask_drop_full=args.recon_mask_drop_full,)
+    recon_mask_drop_full=args.recon_mask_drop_full,
+    distribution_output="skewnormal",)
     data_module = FundamentalsDataModule(
         dataset_kwargs={
             "context_length": args.context_points,

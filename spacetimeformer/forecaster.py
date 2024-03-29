@@ -4,10 +4,10 @@ from typing import Tuple
 import torch
 import torch.nn.functional as F
 import pytorch_lightning as pl
-from torch.distributions import Normal
 import numpy as np
 
 import spacetimeformer as stf
+from spacetimeformer.distribution import SkewNormal
 
 
 class Forecaster(pl.LightningModule, ABC):
@@ -93,21 +93,21 @@ class Forecaster(pl.LightningModule, ABC):
         self, true: torch.Tensor, preds, mask: torch.Tensor
     ) -> torch.Tensor:
         if self.loss == "mse":
-            if isinstance(preds, Normal):
+            if isinstance(preds, SkewNormal):
                 preds = preds.mean
             return F.mse_loss(mask * true, mask * preds)
         elif self.loss == "mae":
-            if isinstance(preds, Normal):
+            if isinstance(preds, SkewNormal):
                 preds = preds.mean
             return torch.abs((true - preds) * mask).mean()
         elif self.loss == "smape":
-            if isinstance(preds, Normal):
+            if isinstance(preds, SkewNormal):
                 preds = preds.mean
             num = 2.0 * abs(preds - true)
             den = abs(preds.detach()) + abs(true) + 1e-5
             return 100.0 * (mask * (num / den)).sum() / max(mask.sum(), 1)
         elif self.loss == "nll":
-            assert isinstance(preds, Normal), "NLL Loss only works with a Distribution but the code is optimized for normal"
+            assert isinstance(preds, SkewNormal), "NLL Loss only works with a Distribution but the code is optimized for normal"
             log_prob = preds.log_prob(true)
             return -(mask * log_prob).sum(-1).sum(-1).mean()
             # return F.nll_loss(mask * true, mask * preds)
@@ -174,9 +174,9 @@ class Forecaster(pl.LightningModule, ABC):
             )
 
         # handle case that the output is a distribution (spacetimeformer)
-        if isinstance(normalized_preds, Normal):
+        if isinstance(normalized_preds, SkewNormal):
             if sample_preds:
-                normalized_preds = normalized_preds.sample(100)
+                normalized_preds = normalized_preds.sample((100,))
             else:
                 normalized_preds = normalized_preds.mean
 
@@ -219,7 +219,7 @@ class Forecaster(pl.LightningModule, ABC):
         preds, *extra = self.forward_model_pass(x_c, seasonal_yc, x_t, y_t, **forward_kwargs)
         baseline = self.linear_model(trend_yc, pred_len=pred_len, d_yt=d_yt)
         
-        if isinstance(preds, Normal):
+        if isinstance(preds, SkewNormal):
             preds.loc = self.revin(preds.loc + baseline, mode="denorm")
             output = preds
         else:

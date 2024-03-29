@@ -4,7 +4,6 @@ import warnings
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.distributions as pyd
 from einops import rearrange, repeat
 
 from .extra_layers import ConvBlock, Normalization, FoldForPred
@@ -22,6 +21,7 @@ from .attn import (
 from .embed import SpacetimeformerEmbeddingWithCategoricals
 from .data_dropout import ReconstructionDropout
 import gc
+from spacetimeformer.distribution import SkewNormal
 
 
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -75,6 +75,7 @@ class Spacetimeformer(nn.Module):
         recon_mask_drop_seq: float = 0.1,
         recon_mask_drop_standard: float = 0.2,
         recon_mask_drop_full: float = 0.05,
+        distribution_output: str = "skewnormal",
         verbose: bool = True,
     ):
         super().__init__()
@@ -96,6 +97,7 @@ class Spacetimeformer(nn.Module):
         self.d_yt = d_yt
         self.d_yc = d_yc
         self.start_token_len = start_token_len
+        self.distribution_output = distribution_output
         
         # generates random masks of context sequence for encoder to reconstruct
         recon_dropout = ReconstructionDropout(
@@ -259,8 +261,8 @@ class Spacetimeformer(nn.Module):
         qprint(f"Pad Value: {self.dec_embedding.pad_value}")
         qprint(f"Reconstruction Dropout: {self.enc_embedding.data_drop}")
 
-        out_dim = 2 if self.embed_method == "spatio-temporal" else 2 * d_yt
-        recon_dim = 2 if self.embed_method == "spatio-temporal" else 2 * d_yc
+        out_dim = 3 if self.embed_method == "spatio-temporal" else 3 * d_yt
+        recon_dim = 3 if self.embed_method == "spatio-temporal" else 3 * d_yc
         
         # final linear layers turn Transformer output into predictions
         self.forecaster = nn.Linear(d_model, out_dim, bias=True)
@@ -271,13 +273,16 @@ class Spacetimeformer(nn.Module):
         dec_out = dec_out.chunk(d_y, dim=1)
         means = []
         log_stds = []
+        alphas = []
         for y in dec_out:
-            mean, log_std = y.chunk(2, dim=-1)
+            mean, log_std, alpha = y.chunk(3, dim=-1)
             means.append(mean)
             log_stds.append(log_std)
+            alphas.append(alpha)
         means = torch.cat(means, dim=-1)[:, self.start_token_len :, :]
         log_stds = torch.cat(log_stds, dim=-1)[:, self.start_token_len :, :]
-        return means, log_stds
+        alphas = torch.cat(alphas, dim=-1)[:, self.start_token_len :, :]
+        return means, log_stds, alphas
 
     def forward(
         self,
@@ -332,18 +337,22 @@ class Spacetimeformer(nn.Module):
         forecast_out = forecast_out[:, self.start_token_len :, :]
         
         if self.embed_method == "spatio-temporal":
-            forecast_means, forecast_log_stds = self._fold_spatio_temporal(forecast_out, self.d_yt)
-            recon_means, recon_log_stds = self._fold_spatio_temporal(recon_out, self.d_yc)
+            forecast_means, forecast_log_stds, forecast_alphas = self._fold_spatio_temporal(forecast_out, self.d_yt)
+            recon_means, recon_log_stds, recon_alphas = self._fold_spatio_temporal(recon_out, self.d_yc)
         else:
-            forecast_means, forecast_log_stds = forecast_out.chunk(2, dim=-1)
-            recon_means, recon_log_stds = forecast_out.chunk(2, dim=-1)
+            forecast_means, forecast_log_stds, forecast_alphas = forecast_out.chunk(3, dim=-1)
+            recon_means, recon_log_stds, recon_alphas = recon_out.chunk(3, dim=-1)
 
         # stabilization trick from Neural Processes papers
         forecast_log_stds = 1e-3 + (1.0 - 1e-3) * torch.log(1.0 + forecast_log_stds.exp())
         recon_log_stds = 1e-3 + (1.0 - 1e-3) * torch.log(1.0 + recon_log_stds.exp())
-
-        forecast_out = pyd.Normal(forecast_means, forecast_log_stds)
-        recon_out = pyd.Normal(recon_means, recon_log_stds)
+        
+        if self.distribution_output == "normal":
+            forecast_alphas = torch.zeros_like(forecast_means)
+            recon_alphas = torch.zeros_like(recon_means)
+        
+        forecast_out = SkewNormal(forecast_means, forecast_log_stds, forecast_alphas)
+        recon_out = SkewNormal(recon_means, recon_log_stds, recon_alphas)
 
         if enc_var_idxs is not None:
             # note that detaching the input like this means the transformer layers

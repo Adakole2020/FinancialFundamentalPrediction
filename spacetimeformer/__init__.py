@@ -9,3 +9,4 @@ from . import plot
 from . import linear_model
 from . import spacetimeformer_model
 from . import train
+from . import distribution
