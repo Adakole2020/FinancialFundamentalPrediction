@@ -13,20 +13,41 @@ import pandas as pd
 import numpy as np
 
 class FundamentalsCSVSeries:
+    """
+    Class for handling financial fundamentals data from a CSV file.
+    """
+
     def __init__(
         self,
-        val_split: float = 0.15,  # int or float indicating the split for the validation set
-        test_split: float = 0.15, # int or float indicating the split for the test set
-        context_length: int = 18, # Use the context of 18 quarters to predict the next 8 quarters
+        val_split: float = 0.15,
+        test_split: float = 0.15,
+        context_length: int = 18,
         prediction_length: int = 8,
-        time_features: List[str] = [
-            "year",
-            "month"
-        ],
-        normalize: bool = True,):
+        time_features: List[str] = ["year", "month"],
+        normalize: bool = True,
+    ):
+        """
+        Initialize the FundamentalsCSVSeries object.
+
+        Parameters:
+        - val_split: float, optional (default=0.15)
+            The split ratio for the validation set.
+        - test_split: float, optional (default=0.15)
+            The split ratio for the test set.
+        - context_length: int, optional (default=18)
+            The number of previous timesteps given to the model in order to make predictions.
+        - prediction_length: int, optional (default=8)
+            The number of timesteps to predict.
+        - time_features: List[str], optional (default=["year", "month"])
+            The time features to use for modeling.
+        - normalize: bool, optional (default=True)
+            Whether to normalize the data.
+
+        """
         #CHANGED_FILE
         raw_df = pd.read_csv("https://docs.google.com/spreadsheets/d/e/2PACX-1vSdLYZtOd12U14IGzypjzIX1q69OMuhW_AsTaOgdZc7UgqJSvuBIC8V85kZeQHnqiCxaB7Ezsru_ri7/pub?gid=198200420&single=true&output=csv")
         
+        # Preprocessing steps
         raw_df = raw_df[raw_df['quarter'].notnull()].reset_index(drop = True)
         raw_df['eps_surprise'] = np.where(raw_df['eps_normalized_consensus_mean'] == 0, raw_df['eps_normalized_actual'], (raw_df["eps_normalized_actual"] - raw_df["eps_normalized_consensus_mean"])/raw_df["eps_normalized_consensus_mean"])
         raw_df.drop(columns = ["eps_normalized_actual"], inplace = True)
@@ -54,9 +75,10 @@ class FundamentalsCSVSeries:
         # Select columns with 'float64' dtype
         float64_cols = list(df.select_dtypes(include='float64'))
 
-        # The same code again calling the columns
+        # Convert selected columns to 'float32' dtype
         df[float64_cols] = df[float64_cols].astype('float32')
             
+        # Convert categorical columns to numerical codes
         df[self.categorical_context_cols] = df[self.categorical_context_cols].apply(lambda x: x.cat.codes)
         
         self.normalize = normalize
@@ -68,6 +90,7 @@ class FundamentalsCSVSeries:
             
         df = self.apply_scaling_df(df)
         
+        # Fill missing values with a large negative number
         df[float64_cols] = df[float64_cols].fillna(value=-1e2)
         
         grouped_df= df.groupby(group_cols)
@@ -134,17 +157,49 @@ class FundamentalsCSVSeries:
     
     @property
     def train_data(self):
+        """
+        Get the training data.
+
+        Returns:
+        - train_data: tuple
+            A tuple containing the training data arrays.
+        """
         return self._train_data
 
     @property
     def val_data(self):
+        """
+        Get the validation data.
+
+        Returns:
+        - val_data: tuple
+            A tuple containing the validation data arrays.
+        """
         return self._val_data
 
     @property
     def test_data(self):
+        """
+        Get the test data.
+
+        Returns:
+        - test_data: tuple
+            A tuple containing the test data arrays.
+        """
         return self._test_data
 
     def length(self, split):
+        """
+        Get the length of a specific split.
+
+        Parameters:
+        - split: str
+            The split name ("train", "val", or "test").
+
+        Returns:
+        - length: int
+            The length of the specified split.
+        """
         return {
             "train": self._train_data[0].shape[0],
             "val": self._val_data[0].shape[0],
@@ -152,10 +207,32 @@ class FundamentalsCSVSeries:
         }[split]
         
     def _arrange_cols(self, df):
+        """
+        Rearrange the columns of the DataFrame.
+
+        Parameters:
+        - df: pandas.DataFrame
+            The DataFrame to rearrange.
+
+        Returns:
+        - df: pandas.DataFrame
+            The rearranged DataFrame.
+        """
         df = df[self.time_cols.tolist() + self.target_cols + [x for x in self.context_cols if x not in self.categorical_context_cols] + self.categorical_context_cols]
         return df
     
     def apply_scaling_df(self, df):
+        """
+        Apply scaling to the DataFrame.
+
+        Parameters:
+        - df: pandas.DataFrame
+            The DataFrame to apply scaling to.
+
+        Returns:
+        - scaled: pandas.DataFrame
+            The scaled DataFrame.
+        """
         if not self.normalize:
             return df
         scaled = df.copy(deep=True)
@@ -165,6 +242,17 @@ class FundamentalsCSVSeries:
         return scaled
 
     def apply_scaling(self, array):
+        """
+        Apply scaling to the array.
+
+        Parameters:
+        - array: numpy.ndarray
+            The array to apply scaling to.
+
+        Returns:
+        - scaled: numpy.ndarray
+            The scaled array.
+        """
         if not self.normalize:
             return array
         dim = array.shape[-1]
@@ -172,6 +260,17 @@ class FundamentalsCSVSeries:
 
 
     def reverse_scaling_df(self, df):
+        """
+        Reverse the scaling of the DataFrame.
+
+        Parameters:
+        - df: pandas.DataFrame
+            The DataFrame to reverse scaling.
+
+        Returns:
+        - scaled: pandas.DataFrame
+            The DataFrame with scaling reversed.
+        """
         if not self.normalize:
             return df
         scaled = df.copy(deep=True)
@@ -181,16 +280,31 @@ class FundamentalsCSVSeries:
         return scaled
 
     def reverse_scaling(self, array):
+        """
+        Reverse the scaling of the array.
+
+        Parameters:
+        - array: numpy.ndarray
+            The array to reverse scaling.
+
+        Returns:
+        - scaled: numpy.ndarray
+            The array with scaling reversed.
+        """
         if not self.normalize:
             return array
-        # self._scaler is fit for exo_cols
-        # if the array dim is less than this length we start
-        # slicing from the target cols
         dim = array.shape[-1]
         return (array * self._scaler.scale_[:dim]) + self._scaler.mean_[:dim]
     
     @classmethod
     def add_cli(self, parser):
+        """
+        Add command-line arguments for the FundamentalsCSVSeries class.
+
+        Parameters:
+        - parser: argparse.ArgumentParser
+            The argument parser object.
+        """
         parser.add_argument(
             "--context_points",
             type=int,
@@ -206,22 +320,61 @@ class FundamentalsCSVSeries:
         
     
 class FundamentalsDset(Dataset):
+    """
+    Dataset class for handling financial fundamentals data.
+
+    Args:
+        csv_time_series (FundamentalsCSVSeries): The CSV time series data.
+        split (str, optional): The split of the dataset (train, val, or test). Defaults to "train".
+    """
+
     def __init__(
         self,
         csv_time_series: FundamentalsCSVSeries,
         split: str = "train",
     ):
+        """
+        Initializes the FundamentalsDset class.
+
+        Args:
+            csv_time_series (FundamentalsCSVSeries): The CSV time series data.
+            split (str, optional): The split of the dataset (train, val, or test). Defaults to "train".
+        """
         assert split in ["train", "val", "test"]
         self.split = split
         self.series = csv_time_series
         
     def __len__(self):
+        """
+        Returns the length of the dataset.
+
+        Returns:
+            int: The length of the dataset.
+        """
         return self.series.length(self.split)
 
     def _torch(self, *dfs):
+        """
+        Converts the input data to torch tensors.
+
+        Args:
+            *dfs: Variable number of input data arrays.
+
+        Returns:
+            tuple: Tuple of torch tensors.
+        """
         return tuple(torch.from_numpy(x).float() for x in dfs)
 
     def __getitem__(self, i):
+        """
+        Returns the i-th item from the dataset.
+
+        Args:
+            i (int): Index of the item to retrieve.
+
+        Returns:
+            tuple: Tuple of torch tensors representing the i-th item.
+        """
         if self.split == "train":
             return self._torch(self.series.train_data[0][i], self.series.train_data[1][i], self.series.train_data[2][i], self.series.train_data[3][i])
         elif self.split == "val":
@@ -231,6 +384,10 @@ class FundamentalsDset(Dataset):
         
         
 class FundamentalsDataModule(DataModule):
+    """
+    Data module for handling financial fundamentals data.
+    """
+
     def __init__(
         self,
         dataset_kwargs: dict,
@@ -239,6 +396,16 @@ class FundamentalsDataModule(DataModule):
         collate_fn=None,
         overfit: bool = False,
     ):
+        """
+        Initializes the FundamentalsDataModule.
+
+        Args:
+            dataset_kwargs (dict): Keyword arguments for the dataset.
+            batch_size (int): The batch size for the data loader.
+            workers (int): The number of workers for data loading.
+            collate_fn (callable, optional): Function to use for custom collation of samples. Defaults to None.
+            overfit (bool, optional): Whether to overfit the data. Defaults to False.
+        """
         super().__init__(FundamentalsDset, dataset_kwargs, batch_size, workers, collate_fn, overfit)
         self.batch_size = batch_size
         if "split" in dataset_kwargs.keys():
@@ -252,6 +419,16 @@ class FundamentalsDataModule(DataModule):
         self.overfit = overfit
         
     def _make_dloader(self, split, shuffle=False):
+        """
+        Creates a data loader for the specified split.
+
+        Args:
+            split (str): The split to create the data loader for.
+            shuffle (bool, optional): Whether to shuffle the data. Defaults to False.
+
+        Returns:
+            DataLoader: The data loader for the specified split.
+        """
         if self.overfit:
             split = "train"
             shuffle = True

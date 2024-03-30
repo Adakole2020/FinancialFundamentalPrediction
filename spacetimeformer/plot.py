@@ -23,7 +23,25 @@ def _assert_squeeze(x):
     return x.squeeze(-1)
 
 
-def plot(x_c, y_c, x_t, y_t, idx, title, preds, pad_val=None, conf=None):
+def plot(x_c, y_c, x_t, y_t, idx, title, preds, shape=None, pad_val=None, conf=None):
+    """
+    Plot the context, true values, and forecasted values.
+
+    Args:
+        x_c (array-like): The x-axis values for the context.
+        y_c (array-like): The y-axis values for the context.
+        x_t (array-like): The x-axis values for the target.
+        y_t (array-like): The y-axis values for the target.
+        idx (int): The index of the target value to plot.
+        title (str): The title of the plot.
+        preds (array-like): The forecasted values.
+        shape (float, optional): The shape value to display in the title. Defaults to None.
+        pad_val (float, optional): The padding value to exclude from the plot. Defaults to None.
+        conf (array-like, optional): The confidence interval values. Defaults to None.
+
+    Returns:
+        array-like: The image of the plot.
+    """
     y_c = y_c[..., 0]
     y_t = _assert_squeeze(y_t)
     preds = _assert_squeeze(preds)
@@ -52,6 +70,9 @@ def plot(x_c, y_c, x_t, y_t, idx, title, preds, pad_val=None, conf=None):
     ax.set_xticks(range(0, len(y_c) + len(y_t), 4))
     ax.set_xlabel("")
     ax.set_ylabel("")
+    
+    if shape is not None:
+        title = f"{title} - Shape: {shape.mean():.2f} +/- {shape.std():.2f}"
     ax.set_title(title)
 
     buf = io.BytesIO()
@@ -65,6 +86,21 @@ def plot(x_c, y_c, x_t, y_t, idx, title, preds, pad_val=None, conf=None):
     return img
 
 def show_image(data, title, figsize=(7,7), x_tick_spacing=None, y_tick_spacing=None, cmap="Blues"):
+    """
+    Display an image using matplotlib.
+
+    Args:
+        data (numpy.ndarray): The image data.
+        title (str): The title of the image.
+        figsize (tuple, optional): The size of the figure. Defaults to (7, 7).
+        x_tick_spacing (int, optional): The spacing between x-axis ticks. Defaults to None.
+        y_tick_spacing (int, optional): The spacing between y-axis ticks. Defaults to None.
+        cmap (str, optional): The colormap to use. Defaults to "Blues".
+
+    Returns:
+        numpy.ndarray: The image as a NumPy array.
+
+    """
     fig, ax = plt.subplots(figsize=figsize)
 
     plt.imshow(data, cmap=cmap)
@@ -88,6 +124,19 @@ def show_image(data, title, figsize=(7,7), x_tick_spacing=None, y_tick_spacing=N
 
 
 class PredictionPlotterCallback(pl.Callback):
+    """
+    Callback for plotting predictions during training.
+
+    Args:
+        test_batches (list): List of test data batches.
+        var_idxs (list, optional): List of variable indices to plot. Defaults to None.
+        var_names (list, optional): List of variable names corresponding to var_idxs. Defaults to None.
+        pad_val (float, optional): Padding value for plotting. Defaults to None.
+        total_samples (int, optional): Total number of samples to plot. Defaults to 4.
+        identifiers (list, optional): List of identifiers for each sample. Defaults to None.
+        log_to_wandb (bool, optional): Whether to log images to Weights & Biases. Defaults to True.
+    """
+
     def __init__(self,
         test_batches,
         var_idxs=None,
@@ -113,6 +162,13 @@ class PredictionPlotterCallback(pl.Callback):
         self.imgs = None
 
     def on_train_epoch_end(self, trainer, model):
+        """
+        Method called at the end of each training epoch.
+
+        Args:
+            trainer (pytorch_lightning.Trainer): The trainer object.
+            model (torch.nn.Module): The model being trained.
+        """
         idxs = [random.sample(range(self.test_data[0].shape[0]), k=self.total_samples)]
         x_c, y_c, x_t, y_t = [i[idxs].detach().to(model.device) for i in self.test_data]
         with torch.no_grad():
@@ -121,6 +177,7 @@ class PredictionPlotterCallback(pl.Callback):
                 samples = preds.sample((200,)).permute(1, 2, 0, 3)
                 L_CI = torch.quantile(samples, 0.025, dim=-2)
                 R_CI = torch.quantile(samples, 0.975, dim=-2)
+                shape = preds.alpha
                 preds = preds.mean
                 conf = [L_CI, R_CI]
             else:
@@ -140,6 +197,7 @@ class PredictionPlotterCallback(pl.Callback):
                     idx=var_idx,
                     title=f"{var_name}{identifier}",
                     preds=preds[i].cpu().numpy(),
+                    shape=shape[i].cpu().numpy() if shape is not None else None,
                     pad_val=self.pad_val,
                     conf=[conf[0][i], conf[1][i]] if conf is not None else None,
                 )
@@ -160,6 +218,22 @@ class PredictionPlotterCallback(pl.Callback):
 
 
 class AttentionMatrixCallback(pl.Callback):
+    """
+    Callback class for computing and logging attention matrices during training.
+
+    Args:
+        test_batches (tuple): Tuple of test data batches.
+        layer (int): Layer index for which attention matrices should be computed.
+        total_samples (int): Number of samples to compute attention matrices for.
+        raw_data_dir (str): Directory path to raw data.
+
+    Attributes:
+        test_data (tuple): Tuple of test data batches.
+        total_samples (int): Number of samples to compute attention matrices for.
+        layer (int): Layer index for which attention matrices should be computed.
+        raw_data_dir (str): Directory path to raw data.
+    """
+
     def __init__(self, test_batches, layer=0, total_samples=32, raw_data_dir=None):
         self.test_data = test_batches
         self.total_samples = total_samples
@@ -167,6 +241,15 @@ class AttentionMatrixCallback(pl.Callback):
         self.raw_data_dir = raw_data_dir
 
     def _get_attns(self, model):
+        """
+        Compute attention matrices for the given model.
+
+        Args:
+            model: The model for which attention matrices should be computed.
+
+        Returns:
+            Tuple: Tuple containing the encoder attention matrix and decoder attention matrix.
+        """
         idxs = [random.sample(range(self.test_data[0].shape[0]), k=self.total_samples)]
         x_c, y_c, x_t, y_t = [i[idxs].detach().to(model.device) for i in self.test_data]
         enc_attns, dec_attns = None, None
@@ -204,6 +287,16 @@ class AttentionMatrixCallback(pl.Callback):
         return enc_attns, dec_attns
 
     def _make_imgs(self, attns, img_title_prefix):
+        """
+        Create images from attention matrices.
+
+        Args:
+            attns: Attention matrices.
+            img_title_prefix (str): Prefix for the image titles.
+
+        Returns:
+            list: List of images created from attention matrices.
+        """
         heads = [i for i in range(attns.shape[0])] + ["avg", "sum"]
         imgs = []
         for head in heads:
@@ -245,6 +338,17 @@ class AttentionMatrixCallback(pl.Callback):
     
     
     def _pos_sim_scores(self, embedding, seq_len, device):
+        """
+        Compute position embedding similarity scores.
+
+        Args:
+            embedding: The embedding layer.
+            seq_len (int): Length of the sequence.
+            device: The device on which the computation should be performed.
+
+        Returns:
+            ndarray: Array of position embedding similarity scores.
+        """
         if embedding.position_emb == "t2v":
             inp = torch.arange(seq_len).float().to(device).view(1, -1, 1)
             encoder_embs = embedding.local_emb(inp)[0, :, 1:]
@@ -261,6 +365,13 @@ class AttentionMatrixCallback(pl.Callback):
 
     
     def on_train_epoch_end(self, trainer, model):
+        """
+        Callback method called at the end of each training epoch.
+
+        Args:
+            trainer: The PyTorch Lightning trainer.
+            model: The model being trained.
+        """
         self_attns, cross_attns = self._get_attns(model)
 
         if self_attns is not None:

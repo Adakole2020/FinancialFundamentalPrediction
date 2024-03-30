@@ -16,6 +16,9 @@ pl.seed_everything(123, workers=True)
 rstate = np.random.default_rng(123)
 
 import warnings
+import wandb
+import os
+from dotenv import load_dotenv
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -29,18 +32,24 @@ class SpaceTimeformerProgressBar(TQDMProgressBar):
 
 
 def create_parser():
+    """
+    Create an argument parser for command-line arguments.
+
+    Returns:
+        argparse.ArgumentParser: The argument parser object.
+    """
     parser = ArgumentParser()
 
-    FundamentalsCSVSeries.add_cli(parser)
-    FundamentalsDataModule.add_cli(parser)
+    FundamentalsCSVSeries.add_cli(parser)  # Add command-line arguments for FundamentalsCSVSeries
+    FundamentalsDataModule.add_cli(parser)  # Add command-line arguments for FundamentalsDataModule
 
-    Spacetimeformer_Forecaster.add_cli(parser)
+    Spacetimeformer_Forecaster.add_cli(parser)  # Add command-line arguments for Spacetimeformer_Forecaster
 
-    parser.add_argument("--accumulate", type=int, default=1)
-    parser.add_argument("--patience", type=int, default=5)
+    parser.add_argument("--accumulate", type=int, default=1)  # Add an argument for accumulation
+    parser.add_argument("--patience", type=int, default=5)  # Add an argument for patience
     parser.add_argument(
         "--execution_type", type=str, default="train", choices=["train", "test"]
-    )
+    )  # Add an argument for execution type
     
     if len(sys.argv) > 3 and sys.argv[3] == "-h":
         parser.print_help()
@@ -49,12 +58,18 @@ def create_parser():
     return parser
 
 def trainer(args):
-    import wandb
-    import os
-    from dotenv import load_dotenv
+    """
+    Trains a Spacetimeformer model for financial fundamentals prediction.
+
+    Args:
+        args: A dictionary containing the arguments for training.
+
+    Returns:
+        None
+    """
     load_dotenv()
     
-    log_dir = os.getenv("STF_LOG_DIR")
+    log_dir = os.getenv("STF_LOG_DIR")  # Get the log directory from environment variables
     if log_dir is None:
         log_dir = "./data/STF_LOG_DIR"
         print(
@@ -63,7 +78,7 @@ def trainer(args):
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
 
-    project = os.getenv("STF_WANDB_PROJ")
+    project = os.getenv("STF_WANDB_PROJ")  # Get the project name from environment variables
     assert (
         project is not None
     ), "Please set environment variables `STF_WANDB_PROJ` with \n\
@@ -72,7 +87,7 @@ def trainer(args):
         project=project,
         config={
         "architecture": "Spacetimeformer",
-        "epochs": 10,
+        "epochs": 15,
         "method": args.embed_method,
         },
         dir=log_dir,
@@ -136,7 +151,7 @@ def trainer(args):
     recon_mask_drop_seq=args.recon_mask_drop_seq,
     recon_mask_drop_standard=args.recon_mask_drop_standard,
     recon_mask_drop_full=args.recon_mask_drop_full,
-    distribution_output="skewnormal",)
+    distribution_output=args.distribution_output,)
     data_module = FundamentalsDataModule(
         dataset_kwargs={
             "context_length": args.context_points,
@@ -181,7 +196,7 @@ def trainer(args):
     
     
     trainer = pl.Trainer(
-        max_epochs=12,
+        max_epochs=15,
         logger=logger,
         callbacks=callbacks,
         gradient_clip_val=0.5,
@@ -202,6 +217,15 @@ def trainer(args):
     experiment.finish()
     
 def test_model(args):
+    """
+    Function to test the Spacetimeformer model.
+
+    Args:
+        args: An object containing the arguments for the model.
+
+    Returns:
+        None
+    """
     forecaster = Spacetimeformer_Forecaster(d_x=2, d_yc=35, d_yt = 1, categorical_dict_sizes = [11,25,74,163], 
     max_seq_len=args.context_points + args.target_points,
     start_token_len=0,

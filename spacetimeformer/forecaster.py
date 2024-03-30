@@ -25,6 +25,22 @@ class Forecaster(pl.LightningModule, ABC):
         use_seasonal_decomp: bool = False,
         verbose: int = True,
     ):
+        """
+        Forecaster class for time series forecasting using SpaceTimeFormer.
+
+        Args:
+            d_x (int): Dimensionality of the input features.
+            d_yc (int): Dimensionality of the conditioning features.
+            d_yt (int): Dimensionality of the target features.
+            learning_rate (float, optional): Learning rate for the optimizer. Defaults to 1e-3.
+            l2_coeff (float, optional): L2 regularization coefficient. Defaults to 0.
+            loss (str, optional): Loss function to use. Can be "mse", "mae", "smape", or "nll". Defaults to "mse".
+            linear_window (int, optional): Window size for the linear model. Defaults to 0.
+            linear_shared_weights (bool, optional): Whether to use shared weights in the linear model. Defaults to False.
+            use_revin (bool, optional): Whether to use RevIN for conditioning features. Defaults to False.
+            use_seasonal_decomp (bool, optional): Whether to use seasonal decomposition for conditioning features. Defaults to False.
+            verbose (int, optional): Verbosity level. Defaults to True.
+        """
         super().__init__()
         torch.set_flush_denormal(True)
         
@@ -71,27 +87,68 @@ class Forecaster(pl.LightningModule, ABC):
         self.save_hyperparameters()
 
     def set_null_value(self, val: float) -> None:
+        """
+        Set the null value for the target features.
+
+        Args:
+            val (float): Null value.
+        """
         self.null_value = val
 
     def set_inv_scaler(self, scaler) -> None:
+        """
+        Set the inverse scaler function.
+
+        Args:
+            scaler: Inverse scaler function.
+        """
         self._inv_scaler = scaler
 
     def set_scaler(self, scaler) -> None:
+        """
+        Set the scaler function.
+
+        Args:
+            scaler: Scaler function.
+        """
         self._scaler = scaler
 
     @property
     @abstractmethod
     def train_step_forward_kwargs(self):
+        """
+        Get the forward kwargs for the training step.
+
+        Returns:
+            dict: Forward kwargs for the training step.
+        """
         return {}
 
     @property
     @abstractmethod
     def eval_step_forward_kwargs(self):
+        """
+        Get the forward kwargs for the evaluation step.
+
+        Returns:
+            dict: Forward kwargs for the evaluation step.
+        """
         return {}
 
     def loss_fn(
         self, true: torch.Tensor, preds, mask: torch.Tensor
     ) -> torch.Tensor:
+        """
+        Compute the loss function.
+
+        Args:
+            true (torch.Tensor): True target values.
+            preds: Predicted target values.
+            mask (torch.Tensor): Mask indicating valid values.
+
+        Returns:
+            torch.Tensor: Loss value.
+        """
         if self.loss == "mse":
             if isinstance(preds, SkewNormal):
                 preds = preds.mean
@@ -110,13 +167,23 @@ class Forecaster(pl.LightningModule, ABC):
             assert isinstance(preds, SkewNormal), "NLL Loss only works with a Distribution but the code is optimized for normal"
             log_prob = preds.log_prob(true)
             return -(mask * log_prob).sum(-1).sum(-1).mean()
-            # return F.nll_loss(mask * true, mask * preds)
         else:
             raise ValueError(f"Unrecognized Loss Function : {self.loss}")
-    #CHANGED_FILE
+
     def forecasting_loss(
         self, outputs, y_t: torch.Tensor, time_mask: int
     ) -> Tuple[torch.Tensor]:
+        """
+        Compute the forecasting loss.
+
+        Args:
+            outputs: Predicted target values.
+            y_t (torch.Tensor): True target values.
+            time_mask (int): Time mask.
+
+        Returns:
+            Tuple[torch.Tensor]: Forecasting loss and mask.
+        """
         if self.null_value is not None:
             null_mask_mat = y_t != self.null_value
         else:
@@ -140,6 +207,17 @@ class Forecaster(pl.LightningModule, ABC):
         time_mask: int = None,
         forward_kwargs: dict = {},
     ) -> Tuple[torch.Tensor]:
+        """
+        Compute the loss for a batch of data.
+
+        Args:
+            batch (Tuple[torch.Tensor]): Batch of data.
+            time_mask (int, optional): Time mask. Defaults to None.
+            forward_kwargs (dict, optional): Forward kwargs. Defaults to {}.
+
+        Returns:
+            Tuple[torch.Tensor]: Loss value, outputs, and mask.
+        """
         x_c, y_c, x_t, y_t = batch
         outputs, *_ = self(x_c, y_c, x_t, y_t, **forward_kwargs)
         loss, mask = self.forecasting_loss(
@@ -154,6 +232,18 @@ class Forecaster(pl.LightningModule, ABC):
         x_t: torch.Tensor,
         sample_preds: bool = False,
     ) -> torch.Tensor:
+        """
+        Make predictions for a given input.
+
+        Args:
+            x_c (torch.Tensor): Input features for conditioning.
+            y_c (torch.Tensor): Target features for conditioning.
+            x_t (torch.Tensor): Input features for prediction.
+            sample_preds (bool, optional): Whether to sample predictions from a distribution. Defaults to False.
+
+        Returns:
+            torch.Tensor: Predicted target values.
+        """
         og_device = y_c.device
         # move to model device
         x_c = x_c.to(self.device).float()
@@ -197,6 +287,18 @@ class Forecaster(pl.LightningModule, ABC):
         y_t: torch.Tensor,
         **forward_kwargs,
     ) -> Tuple[torch.Tensor]:
+        """
+        Forward pass of the model.
+
+        Args:
+            x_c (torch.Tensor): Input features for conditioning.
+            y_c (torch.Tensor): Target features for conditioning.
+            x_t (torch.Tensor): Input features for prediction.
+            y_t (torch.Tensor): True target values.
+
+        Returns:
+            Tuple[torch.Tensor]: Predicted target values and any additional outputs.
+        """
         return NotImplemented
 
     def forward(
@@ -207,6 +309,19 @@ class Forecaster(pl.LightningModule, ABC):
         y_t: torch.Tensor,
         **forward_kwargs,
     ) -> Tuple[torch.Tensor]:
+        """
+        Forward pass of the model.
+
+        Args:
+            x_c (torch.Tensor): Input features for conditioning.
+            y_c (torch.Tensor): Target features for conditioning.
+            x_t (torch.Tensor): Input features for prediction.
+            y_t (torch.Tensor): True target values.
+            forward_kwargs (dict): Forward kwargs.
+
+        Returns:
+            Tuple[torch.Tensor]: Predicted target values and any additional outputs.
+        """
         x_c, y_c, x_t, y_t = self.nan_to_num(x_c, y_c, x_t, y_t)
         _, pred_len, d_yt = y_t.shape
 
@@ -230,26 +345,45 @@ class Forecaster(pl.LightningModule, ABC):
         return (output,)
 
     def _compute_stats(self, pred: torch.Tensor, true: torch.Tensor, mask: torch.Tensor):
+        """
+        Compute evaluation statistics.
+
+        Args:
+            pred (torch.Tensor): Predicted target values.
+            true (torch.Tensor): True target values.
+            mask (torch.Tensor): Mask indicating valid values.
+
+        Returns:
+            dict: Evaluation statistics.
+        """
         pred = pred * mask
         true = torch.nan_to_num(true) * mask
 
         adj = mask.cpu().numpy() + 1e-5
         pred = pred.detach().cpu().numpy()
         true = true.detach().cpu().numpy()
-        scaled_pred = self._inv_scaler(pred)
-        scaled_true = self._inv_scaler(true)
+        scaled_pred = pred
+        scaled_true = true
         stats = {
             "mape": stf.eval_stats.mape(scaled_true, scaled_pred) / adj,
             "mae": stf.eval_stats.mae(scaled_true, scaled_pred) / adj,
             "mse": stf.eval_stats.mse(scaled_true, scaled_pred) / adj,
             "rse": stf.eval_stats.rrse(scaled_true, scaled_pred) / adj,
             "smape": stf.eval_stats.smape(scaled_true, scaled_pred) / adj,
-            "norm_mae": stf.eval_stats.mae(true, pred) / adj,
-            "norm_mse": stf.eval_stats.mse(true, pred) / adj,
         }
         return stats
 
     def step(self, batch: Tuple[torch.Tensor], train: bool = False):
+        """
+        Perform a forward pass and compute loss and evaluation statistics.
+
+        Args:
+            batch (Tuple[torch.Tensor]): Batch of data.
+            train (bool, optional): Whether it's a training step. Defaults to False.
+
+        Returns:
+            dict: Evaluation statistics.
+        """
         kwargs = (
             self.train_step_forward_kwargs if train else self.eval_step_forward_kwargs
         )
@@ -267,22 +401,59 @@ class Forecaster(pl.LightningModule, ABC):
         return stats
 
     def training_step(self, batch, batch_idx):
+        """
+        Training step.
+
+        Args:
+            batch: Batch of data.
+            batch_idx: Batch index.
+
+        Returns:
+            dict: Evaluation statistics.
+        """
         stats = self.step(batch, train=True)
         self._log_stats("train", stats)
         return stats
 
     def validation_step(self, batch, batch_idx):
+        """
+        Validation step.
+
+        Args:
+            batch: Batch of data.
+            batch_idx: Batch index.
+
+        Returns:
+            dict: Evaluation statistics.
+        """
         stats = self.step(batch, train=False)
         self.validation_step_outputs.append(stats)
         self._log_stats("val", stats)
         return stats
 
     def test_step(self, batch, batch_idx):
+        """
+        Test step.
+
+        Args:
+            batch: Batch of data.
+            batch_idx: Batch index.
+
+        Returns:
+            dict: Evaluation statistics.
+        """
         stats = self.step(batch, train=True)
         self._log_stats("test", stats)
         return stats
 
     def _log_stats(self, section, outs):
+        """
+        Log evaluation statistics.
+
+        Args:
+            section (str): Section name.
+            outs (dict): Evaluation statistics.
+        """
         for key in outs.keys():
             stat = outs[key]
             if isinstance(stat, np.ndarray) or isinstance(stat, torch.Tensor):
