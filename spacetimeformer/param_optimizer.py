@@ -9,7 +9,7 @@ import sys
 
 import pytorch_lightning as pl
 from pytorch_lightning.profilers import PyTorchProfiler 
-from pytorch_lightning.callbacks import TQDMProgressBar
+from pytorch_lightning.callbacks import TQDMProgressBar, ModelCheckpoint, EarlyStopping
 import torch
 
 pl.seed_everything(123, workers=True)
@@ -128,7 +128,7 @@ def trainer(args):
     norm="batch",
     activation="gelu",
     init_lr=1e-8,
-    base_lr=2e-4,
+    base_lr=5e-4,
     warmup_steps=20,
     decay_factor=0.9, # https://stackoverflow.com/questions/67746083/setting-a-minimum-learning-rate-on-reduce-on-plateau
     initial_downsample_convs=args.initial_downsample_convs,
@@ -193,6 +193,22 @@ def trainer(args):
             total_samples=8,
         )
     )   
+    
+    callbacks.append(
+        ModelCheckpoint(
+            monitor="val/loss",
+            mode="min",
+            save_top_k=1,
+            auto_insert_metric_name=True,
+        )
+    )
+    
+    callbacks.append(
+            EarlyStopping(
+                monitor="val/loss",
+                patience=3,
+            )
+        )
     
     
     trainer = pl.Trainer(
